@@ -1,8 +1,9 @@
+source("./GCMClimTool_function_library_CMIP6.R")
 ######### Modifiable data for particular application #####################################################
 
 mFolder = "H:/Shared drives/GCM_Climate_Tool"
 rFolder <- "C:/Users/dmf/projects/gcm-project/test-results"
-shp_file_background <- paste0("/required_files/OBSERVATIONS/LLdM_AOI2/SHP/Basin_LldM.shp") # Basin Shapefile
+shp_file_background <- "/required_files/OBSERVATIONS/LLdM_AOI2/SHP/Basin_LldM.shp" # Basin Shapefile
 BootstrapRuns <- 1 # number of iterations to perform of the bootstrapping routine
 CLIMATE_VARS = c("pr", "tas")
 # setwd(mFolder)
@@ -37,7 +38,8 @@ df$LeapFix <- NA
 
 models = unique(df$Model)
 ensembles = unique(df$Ensemble)
-experiment = unique(df$Experiment)
+experiments = unique(df$Experiment)
+print(experiments)
 fut_all = unique(df$Experiment)
 fut_all = fut_all[fut_all != "Historical"]
 var_all = c("pr")
@@ -47,9 +49,9 @@ if (!dir.exists(file.path(rFolder))) {
 }
 save(df, file = "df.Rda")
 
-for(r in 1:1) #1:nrow(bboxes) 
-{
+for(r in 1:1) { #1:nrow(bboxes) 
   region <- bboxes$Descripcion[r] # name of your basin or region for use in output graphics
+  print(paste("REGION", region))
   bBox = c(
     latMin = bboxes$ymin[r],
     latMax = bboxes$ymax[r],
@@ -63,6 +65,7 @@ for(r in 1:1) #1:nrow(bboxes)
   start1 <- Sys.time()
   
   for (model in models) {
+    print(paste("MODEL", model))
     model_results_path = file.path(rFolder, model)
     # rFolder = paste0(paste0(rFolderMain, model, ""))
     if (!dir.exists(model_results_path)) {
@@ -74,9 +77,11 @@ for(r in 1:1) #1:nrow(bboxes)
     exp_model = unique(df1$Experiment)
     
     for (ensemble in ensembles) {
+      print(paste("ENSEMBLE", ensemble))
       df2 = subset(df1, ensemble == Ensemble)
       
       for (varName in CLIMATE_VARS) {
+        print(paste("VARIABLE", varName))
         df3 = varName #subset(df2, Variable == varName)
         mv = 1 #df3$Moving.Year[1]  #moving year to calculate transition matrix
         varLabel = varName ## (lazy, fix if wanted). .. "Precipitation" #df3$Alias[1]
@@ -88,32 +93,32 @@ for(r in 1:1) #1:nrow(bboxes)
         ## Temp
         # experiment = experiment[1] #"historical"
         
-        res <- try(read_GCM_NCDF(boundingBox = bBox,
-                                 movingDateStep = mv,
-                                 main_folder = mFolder,
-                                 results_folder = rFolder,
-                                 Experiment = experiment,
-                                 Ensemble = ensemble,
-                                 variableName = varName,
-                                 variableLabel = varLabel,
-                                 shp_file = shp_file_background,
-                                 obs_files = observation_files,
-                                 sta_bbox = "region", #historical data from the bbox of the selected GCM pixel ("gcm pixel"), or from the user-defined bbox ("region")
-                                 minObsYear = 1981,
-                                 minGCMYear = as.numeric(substr(as.character(df$Begin),1,4)))
-        )
+        # res <- try(
+        print("READ GCM NCDF")
+        read_GCM_NCDF(boundingBox = bBox,
+                               movingDateStep = mv,
+                               main_folder = mFolder,
+                               results_folder = model_results_path,
+                               Experiments = experiments,
+                               Ensemble = ensemble,
+                               variableName = varName,
+                               variableLabel = varLabel,
+                               shp_file = shp_file_background,
+                               obs_files = observation_files,
+                               sta_bbox = "region", #historical data from the bbox of the selected GCM pixel ("gcm pixel"), or from the user-defined bbox ("region")
+                               minObsYear = 1981,
+                               minGCMYear = as.numeric(substr(as.character(df$Begin),1,4)))
+        # )
         
-        if(inherits(res, "try-error"))
-        {
-          try(dev.off())
-        }
-        load(file.path(mFolder, rFolder, "df.Rda"))
-        print(varName)
+        # if(inherits(res, "try-error")) {
+        #   try(dev.off())
+        # }
+        load(file.path(rFolder, "df.Rda"))
       } # next variable
     } # next ensemble
  
     
-    load(file.path(mFolder, rFolder, "df.Rda"))
+    load(file.path(rFolder, "df.Rda"))
     df1 = subset(df, Model == model)
     exp_model = unique(df1$Experiment)
     exp_model <- exp_model[exp_model != "historical"] # excludes historical experiment from following functions to just have futures
@@ -122,13 +127,18 @@ for(r in 1:1) #1:nrow(bboxes)
   # comparison reports between GCM and observed climate
     
     for (ensemble in ensembles){
+      print(paste("ENSEMBLE", ensemble))
       #Ensemble <- levels(ensemble)[1]
       rcp_pr_ind <- which(df$Model == model & df$Ensemble == ensemble) # just to find base date of a future scenario
+      print(experiment)
       rcp_tas_ind <- which(df$Model == model & df$Experiment == experiment)
       
       for (experiment2 in exp_model) {
+        print(paste("EXPERIMENT", experiment2))
       
-      try(compare_GCM(refDate = c(month = df$BaseMonth[rcp_pr_ind], day = df$BaseDay[rcp_pr_ind], year = df$BaseYear[rcp_pr_ind]),
+        print("COMPARE GCM")
+        # try(
+        compare_GCM(refDate = c(month = df$BaseMonth[rcp_pr_ind], day = df$BaseDay[rcp_pr_ind], year = df$BaseYear[rcp_pr_ind]),
                       main_folder = mFolder,
                       results_folder = rFolder,
                       enso_signal_file = enso_signal_file,
@@ -142,17 +152,20 @@ for(r in 1:1) #1:nrow(bboxes)
                       maxObsYear = 2016,
                       minGCMYear = 2015,
                       maxGCMYear = 2099,
-                      alignHistYears = TRUE))
+                      alignHistYears = TRUE)
+        # )
  
-          }
-      } # next n ensemble member
-    } #next model     
+      } # next experiment
+    } # next n ensemble member
+  } #next model     
   
   #-----------------------------------------------------------
   # PART TWO: Runs the downscaling routines
   #-----------------------------------------------------------
   
+  print("PART TWO DOWNSCALING")
   for (model in models) {
+    print(paste("MODEL", model))
     model_results_path = file.path(rFolder, model)
     load(file.path(model_results_path, "df.Rda"))
     df1 = subset(df, Model == model)
@@ -165,6 +178,7 @@ for(r in 1:1) #1:nrow(bboxes)
     # The future reference year represents the upper boundary year for which new extremes are derived
 
     for (experiment2 in exp_model) {
+      print(paste("EXPERIMENT", experiment2))
 
      # Legacy function. now the extreme value correction is done inside the KNN_BOOTSTRAP function
      #
@@ -178,35 +192,40 @@ for(r in 1:1) #1:nrow(bboxes)
 
 
     for (n in 1:BootstrapRuns){
-      try(knn_bootstrap(refDate = c(month = df$BaseMonth[rcp_pr_ind], day = df$BaseDay[rcp_pr_ind], year = df$BaseYear[rcp_pr_ind]),
-                        main_folder = mFolder,
-                        results_folder = model_results_path,
-                        modelName = model,              #"CCSM4",
-                        futures = experiment2,
-                        varName = "pr",
-                        varLabel = "Precipitation [mm]",
-                        minObsYear = 1980,
-                        maxObsYear = 2015,
-                        nearWindow = 30,
-                        minGCMYear = 2020,
-                        maxGCMYear = 2050,
-                        expNumber = n,
-                        JPmode = "Window",
-                        alignHistYears = TRUE,
-                        HistRepro = FALSE))
+      print("KNN BOOTSTRAP n =", n)
+      # try(
+      knn_bootstrap(refDate = c(month = df$BaseMonth[rcp_pr_ind], day = df$BaseDay[rcp_pr_ind], year = df$BaseYear[rcp_pr_ind]),
+                      main_folder = mFolder,
+                      results_folder = model_results_path,
+                      modelName = model,              #"CCSM4",
+                      futures = experiment2,
+                      varName = "pr",
+                      varLabel = "Precipitation [mm]",
+                      minObsYear = 1980,
+                      maxObsYear = 2015,
+                      nearWindow = 30,
+                      minGCMYear = 2020,
+                      maxGCMYear = 2050,
+                      expNumber = n,
+                      JPmode = "Window",
+                      alignHistYears = TRUE,
+                      HistRepro = FALSE)
+      # )
 
-
-      try(heatSignal(refDate = c(month = df$BaseMonth[rcp_tas_ind], day = df$BaseDay[rcp_tas_ind], year = df$BaseYear[rcp_tas_ind]), #rDate,
-                     main_folder = mFolder,
-                     results_folder = rFolder,
-                     modelName = model,
-                     futures = experiment2,
-                     varName = "tas",
-                     varLabel = "Temperature [c]",
-                     minObsYear = 1980,
-                     maxObsYear = 2015,
-                     minGCMYear = 2020,
-                     maxGCMYear = 2050))
+      print("HEAT SIGNAL BOOTSTRAP n =", n)
+      # try(
+      heatSignal(refDate = c(month = df$BaseMonth[rcp_tas_ind], day = df$BaseDay[rcp_tas_ind], year = df$BaseYear[rcp_tas_ind]), #rDate,
+                   main_folder = mFolder,
+                   results_folder = rFolder,
+                   modelName = model,
+                   futures = experiment2,
+                   varName = "tas",
+                   varLabel = "Temperature [c]",
+                   minObsYear = 1980,
+                   maxObsYear = 2015,
+                   minGCMYear = 2020,
+                   maxGCMYear = 2050)
+      # )
 
 
       # try(sinteticSeries(refDate = c(month = df$BaseMonth[rcp_pr_ind], day = df$BaseDay[rcp_pr_ind], year = df$BaseYear[rcp_pr_ind]),

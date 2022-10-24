@@ -315,7 +315,7 @@ read_GCM_NCDF = function(boundingBox = c(latMin = 1,latMax = 3,lonMin = -76,lonM
                          movingDateStep = 0,                                                  # IMPORTANT: 1 in case reference date changes in each file, (such as in CMCC), otherwise 0
                          main_folder = "F:/GCM_ClimateTool",       
                          results_folder = "/Results",                                         # this path is relative to the main_directory
-                         Experiment = "hist-rcp85",                                           # Default values are just for illustration purpose
+                         Experiments = "hist-rcp85",                                           # Default values are just for illustration purpose
                          Ensemble = "r1ip1",
                          variableName = "tas",
                          variableLabel = "Temperature [k]",
@@ -349,9 +349,10 @@ read_GCM_NCDF = function(boundingBox = c(latMin = 1,latMax = 3,lonMin = -76,lonM
   lonCentr <- mean(c(lonMin,lonMax)) # lon coordinates of centroid of bounding box
   latCentr <- mean(c(latMin,latMax)) # lat coordinates of centroid of bounding box
   
-  Experiments <- Experiment
+  # Experiments <- Experiment
   
   for (Experiment in Experiments) {
+    print(paste("EXPERIMENT", Experiment))
     
     ensamble_day <-NULL
     ensamble_year <- NULL
@@ -362,17 +363,22 @@ read_GCM_NCDF = function(boundingBox = c(latMin = 1,latMax = 3,lonMin = -76,lonM
 
     fName <- fList[1]
   
-# initializes the data frame 
+    # initializes the data frame 
     esm_count = esm_count + 1;
     results_daily <- NULL   
     
     control = nc_open(fName, write=FALSE, readunlim=FALSE)
     modelName = model #att.get.nc(control, "NC_GLOBAL", "model_id")
-    fConc= Experiment
+    fConc = Experiment
         
     calendar <- ncatt_get(control, "time", "calendar")
     baseDate <- as.character(ncatt_get(control, "time", "units"))
-    
+    print(baseDate) #TODO: skip experiments that have broken baseDate?
+    if (!grepl("days since", baseDate[2], fixed=TRUE)) {
+      print("COULD NOT PARSE NetCDF TIME ATTRIBUTE BASE DATE")
+      print("skipping this experiment")
+      next
+    }
     baseDate <- gsub("days since ","",baseDate[2])
     baseDate <- gsub(" 00:00:00","",baseDate)
     if(nchar(baseDate) >= 10) {  # format is 1985-01-01 or 1985-01-01 UTC
@@ -384,7 +390,7 @@ read_GCM_NCDF = function(boundingBox = c(latMin = 1,latMax = 3,lonMin = -76,lonM
       baseMonth <- as.numeric(substr(baseDate, 6,6))
       baseDay <- as.numeric(substr(baseDate, 8,8))
     }
-    
+
     df$BaseDay <- baseDay
     df$BaseMonth <- baseMonth
     df$BaseYear<- baseYear
@@ -410,105 +416,103 @@ read_GCM_NCDF = function(boundingBox = c(latMin = 1,latMax = 3,lonMin = -76,lonM
     timeIdxs = ncvar_get(control, "time")  #ncdf4
     tCount = dim(timeIdxs)
 
-        # Reads coordinates and creates Lat-Lon grids, for plotting purposes:
-        latmat = ncvar_get(control, "lat")
-        lonmat = ncvar_get(control, "lon")
-        
-        # lonmat is required to be in the range -180,180. corrects if the netCDF comes in the 0-360 format,
-        neglon = which(lonmat>180)
-        lonmat[neglon] = lonmat[neglon]-360
-        
-        #creates Lat-Lon grids, for plotting purposes:
-        latgrd <- outer(lonmat, latmat, FUN=function(xx,yy) { yy })
-        longrd <- outer(lonmat, latmat, FUN=function(xx,yy) { xx }) 
-        
-        # finds the indexes of the grid around the bounding box: This is for One GCM pixel!!
-        lonMin_idx = which.min(abs(lonCentr - lonmat)) # now finds the GCM pixel closest to the center of the bounding box
-        lonMax_idx = which.min(abs(lonCentr - lonmat)) 
-        latMin_idx = which.min(abs(latCentr - latmat)) 
-        latMax_idx = which.min(abs(latCentr - latmat))
-        
-         #This is for all the GCM Pixels inside the bounding box
-         Lat_idx_Range <- c(which.min(abs(latMax-latmat)):which.min(abs(latMin-latmat)))
-         Lon_idx_Range <- c(which.min(abs(lonMax-lonmat)):which.min(abs(lonMin-lonmat)))
-                                               
-   
-        if(length(timeIdxs)%%365 == 0) # checks if is using 365 day or not, assumes if not 365 day is using leap days
-        {
-          LeapFix <- "Yes"
-          df$LeapFix <- "Yes"
-          
-        } else {
-          LeapFix <- "No"
-          df$LeapFix <- "No"
-        }
-        
-        startTime = 1
+    # Reads coordinates and creates Lat-Lon grids, for plotting purposes:
+    latmat = ncvar_get(control, "lat")
+    lonmat = ncvar_get(control, "lon")
+    
+    # lonmat is required to be in the range -180,180. corrects if the netCDF comes in the 0-360 format,
+    neglon = which(lonmat>180)
+    lonmat[neglon] = lonmat[neglon]-360
+    
+    #creates Lat-Lon grids, for plotting purposes:
+    latgrd <- outer(lonmat, latmat, FUN=function(xx,yy) { yy })
+    longrd <- outer(lonmat, latmat, FUN=function(xx,yy) { xx }) 
+    
+    # finds the indexes of the grid around the bounding box: This is for One GCM pixel!!
+    lonMin_idx = which.min(abs(lonCentr - lonmat)) # now finds the GCM pixel closest to the center of the bounding box
+    lonMax_idx = which.min(abs(lonCentr - lonmat)) 
+    latMin_idx = which.min(abs(latCentr - latmat)) 
+    latMax_idx = which.min(abs(latCentr - latmat))
+    
+    #This is for all the GCM Pixels inside the bounding box
+    Lat_idx_Range <- c(which.min(abs(latMax-latmat)):which.min(abs(latMin-latmat)))
+    Lon_idx_Range <- c(which.min(abs(lonMax-lonmat)):which.min(abs(lonMin-lonmat)))
+                                           
 
-        # chooses all the pixels in the bounding box
-        st = c(min(Lon_idx_Range),min(Lat_idx_Range),startTime)        # lon, lat, time
-        ct = c(length(Lon_idx_Range),length(Lat_idx_Range),tCount)
-        tmp = ncvar_get(control, as.character(variableName), st, ct) #ncdf4
-        data <- as.matrix(colMeans(colMeans(tmp))) #compute the mean of all the pixels
+    if(length(timeIdxs)%%365 == 0) # checks if is using 365 day or not, assumes if not 365 day is using leap days
+    {
+      LeapFix <- "Yes"
+      df$LeapFix <- "Yes"
+      
+    } else {
+      LeapFix <- "No"
+      df$LeapFix <- "No"
+    }
+    
+    startTime = 1
 
-        # fixes funny behavior of var.get.nc function: trims the dimensions of the results if the count of the dimension = 1
-        # should only need if reading single pixel.. 
-        px1 = 1
-        py1 = 1
-        var_val = data[,1]
-        
-        # does some unit conversion:
-        if (as.character(variableName) == "pr"){
-          var_val = var_val * 86400                                # conversion from kg/ m^2 / s to mm/day 
-        } else if (as.character(variableName) == "tas") {
-          var_val = var_val #- 273.15                              # conversion from k to c                     
-        }
-        
-        if(LeapFix == "Yes")
-        {
-          leap_ind_add <- 0
-          time_year = month.day.year(timeIdxs + leap_ind_add,origin=rDate)$year
-          time_month = month.day.year(timeIdxs + leap_ind_add,origin=rDate)$month
-          time_day = month.day.year(timeIdxs + leap_ind_add,origin=rDate)$day
-          
-          leapday_ind <- which(time_month == 2 & time_day == 29)
-          for(i in leapday_ind)
-          {
-            timeIdxs[i] <- timeIdxs[i] + 1
-            timeIdxs[(i+1):length(timeIdxs)] <- timeIdxs[(i+1):length(timeIdxs)] + 1
-          }
-          
-          time_year = month.day.year(timeIdxs + leap_ind_add,origin=rDate)$year
-          time_month = month.day.year(timeIdxs + leap_ind_add,origin=rDate)$month
-          time_day = month.day.year(timeIdxs + leap_ind_add,origin=rDate)$day
-          
-          leap_ind_add <- leap_ind_add + length(leapday_ind)
-        } else {
-          
-          time_year = month.day.year(timeIdxs,origin=rDate)$year
-          time_month = month.day.year(timeIdxs,origin=rDate)$month
-          time_day = month.day.year(timeIdxs,origin=rDate)$day
-        }
-        
-        results_daily_l <-NULL
-        results_daily_l = data.frame(timeIdxs,time_year,time_month,time_day,var_val) 
-        results_daily_l$timeIdxs <- julian(results_daily_l$time_month,results_daily_l$time_day,results_daily_l$time_year,rDate)  
-        
-        #quick fix of any strange negative values of PRECIP in GCMs:
-        if (as.character(variableName) == "pr"){
-          a = which(results_daily_l$var_val < 0)
-          results_daily_l$var_val[a] = 0 #NaN
-        }
-        
-        results_daily = rbind(results_daily,results_daily_l) #this will now only be called once, so no really needed
-        print(fName)
-        
-        nc_close(control)
-        
-        # this moves the reference date one year  
-        if (movingDateStep > 0) {
-          rDate = c(rDate[1],rDate[2],rDate[3]+movingDateStep)
-        }  
+    # chooses all the pixels in the bounding box
+    st = c(min(Lon_idx_Range),min(Lat_idx_Range),startTime)        # lon, lat, time
+    ct = c(length(Lon_idx_Range),length(Lat_idx_Range),tCount)
+    tmp = ncvar_get(control, as.character(variableName), st, ct) #ncdf4
+    data <- as.matrix(colMeans(colMeans(tmp))) #compute the mean of all the pixels
+
+    # fixes funny behavior of var.get.nc function: trims the dimensions of the results if the count of the dimension = 1
+    # should only need if reading single pixel.. 
+    px1 = 1
+    py1 = 1
+    var_val = data[,1]
+    
+    # does some unit conversion:
+    if (as.character(variableName) == "pr"){
+      var_val = var_val * 86400                                # conversion from kg/ m^2 / s to mm/day 
+    } else if (as.character(variableName) == "tas") {
+      var_val = var_val #- 273.15                              # conversion from k to c                     
+    }
+    
+    if(LeapFix == "Yes") {
+      leap_ind_add <- 0
+      time_year = month.day.year(timeIdxs + leap_ind_add,origin=rDate)$year
+      time_month = month.day.year(timeIdxs + leap_ind_add,origin=rDate)$month
+      time_day = month.day.year(timeIdxs + leap_ind_add,origin=rDate)$day
+      
+      leapday_ind <- which(time_month == 2 & time_day == 29)
+      for(i in leapday_ind) {
+        timeIdxs[i] <- timeIdxs[i] + 1
+        timeIdxs[(i+1):length(timeIdxs)] <- timeIdxs[(i+1):length(timeIdxs)] + 1
+      }
+      
+      time_year = month.day.year(timeIdxs + leap_ind_add,origin=rDate)$year
+      time_month = month.day.year(timeIdxs + leap_ind_add,origin=rDate)$month
+      time_day = month.day.year(timeIdxs + leap_ind_add,origin=rDate)$day
+      
+      leap_ind_add <- leap_ind_add + length(leapday_ind)
+    } else {
+      
+      time_year = month.day.year(timeIdxs,origin=rDate)$year
+      time_month = month.day.year(timeIdxs,origin=rDate)$month
+      time_day = month.day.year(timeIdxs,origin=rDate)$day
+    }
+    
+    results_daily_l <-NULL
+    results_daily_l = data.frame(timeIdxs,time_year,time_month,time_day,var_val) 
+    results_daily_l$timeIdxs <- julian(results_daily_l$time_month,results_daily_l$time_day,results_daily_l$time_year,rDate)  
+    
+    #quick fix of any strange negative values of PRECIP in GCMs:
+    if (as.character(variableName) == "pr"){
+      a = which(results_daily_l$var_val < 0)
+      results_daily_l$var_val[a] = 0 #NaN
+    }
+    
+    results_daily = rbind(results_daily,results_daily_l) #this will now only be called once, so no really needed
+    print(fName)
+    
+    nc_close(control)
+    
+    # this moves the reference date one year  
+    if (movingDateStep > 0) {
+      rDate = c(rDate[1],rDate[2],rDate[3]+movingDateStep)
+    }  
         
     seriesName <- paste(as.character(variableName),"_E",esm_count,sep="")
     colnames(results_daily)[which(colnames(results_daily) == "var_val")] <- seriesName
@@ -536,40 +540,43 @@ read_GCM_NCDF = function(boundingBox = c(latMin = 1,latMax = 3,lonMin = -76,lonM
     
     # generates the df of the ensemble at monthly timestep
   
-  ensemble_day$month_idx = (ensemble_day$time_year - rDate[3]) * 12 + ensemble_day$time_month
-  
-  if (as.character(variableName) == "pr") {
+    ensemble_day$month_idx = (ensemble_day$time_year - rDate[3]) * 12 + ensemble_day$time_month
     
-    ensemble_month <- aggregate(ensemble_day, by = list(ensemble_day$month_idx), FUN=sum)
-    ensemble_month2 <- aggregate(ensemble_day, by = list(ensemble_day$month_idx), FUN=mean)   #dummy dataframe
+    if (as.character(variableName) == "pr") {
+      
+      ensemble_month <- aggregate(ensemble_day, by = list(ensemble_day$month_idx), FUN=sum)
+      ensemble_month2 <- aggregate(ensemble_day, by = list(ensemble_day$month_idx), FUN=mean)   #dummy dataframe
+      
+      ensemble_month$time_year <- ensemble_month2$time_year
+      ensemble_month$time_month <- ensemble_month2$time_month
+      ensemble_month <- ensemble_month[,c("time_year","time_month",colnames(ensemble_month)[length(colnames(ensemble_month)) - 1])]
+      
+    } else {
+      ensemble_month <- aggregate(ensemble_day, by = list(ensemble_day$month_idx), FUN=mean)   #dummy dataframe   
+      ensemble_month <- ensemble_month[,c("time_year","time_month",colnames(ensemble_month)[length(colnames(ensemble_month)) - 1])]
+    }
     
-    ensemble_month$time_year <- ensemble_month2$time_year
-    ensemble_month$time_month <- ensemble_month2$time_month
-    ensemble_month <- ensemble_month[,c("time_year","time_month",colnames(ensemble_month)[length(colnames(ensemble_month)) - 1])]
+    ## Bounding box around the GCM pixel. So far the 1,1 pixel.
+    lon_pixel_space <- lonmat[2] - lonmat[1]
+    lat_pixel_space <- latmat[2] - latmat[1]
     
-  } else {
-    ensemble_month <- aggregate(ensemble_day, by = list(ensemble_day$month_idx), FUN=mean)   #dummy dataframe   
-    ensemble_month <- ensemble_month[,c("time_year","time_month",colnames(ensemble_month)[length(colnames(ensemble_month)) - 1])]
-  }
-  
-  ## Bounding box around the GCM pixel. So far the 1,1 pixel.
-  lon_pixel_space <- lonmat[2] - lonmat[1]
-  lat_pixel_space <- latmat[2] - latmat[1]
-  
-  pix_lonMin = lonmat[lonMin_idx] - lon_pixel_space / 2 #- 180
-  pix_lonMax = lonmat[lonMin_idx] + lon_pixel_space / 2 #- 180
-  
-  pix_latMin = latmat[latMin_idx] - lat_pixel_space / 2
-  pix_latMax = latmat[latMin_idx] + lat_pixel_space / 2
-  
-  
-  # -----------------------------------
-  # saves dataframe with the GCM query, of each experiment
-  
-  save(ensemble_year,file=paste(main_folder,results_folder,"/",paste(modelName,fConc,variableName,"ensemble_year.Rda",sep="_"),sep=""))
-  save(ensemble_day,file=paste(main_folder,results_folder,"/",paste(modelName,fConc,variableName,"ensemble_day.Rda",sep="_"),sep=""))
-  save(ensemble_month,file=paste(main_folder,results_folder,"/",paste(modelName,fConc,variableName,"ensemble_month.Rda",sep="_"),sep=""))
-  
+    pix_lonMin = lonmat[lonMin_idx] - lon_pixel_space / 2 #- 180
+    pix_lonMax = lonmat[lonMin_idx] + lon_pixel_space / 2 #- 180
+    
+    pix_latMin = latmat[latMin_idx] - lat_pixel_space / 2
+    pix_latMax = latmat[latMin_idx] + lat_pixel_space / 2
+    
+    
+    # -----------------------------------
+    # saves dataframe with the GCM query, of each experiment
+    
+    filename_prefix = paste(modelName, fConc, variableName, sep="_")
+    save(ensemble_year,
+         file=file.path(results_folder, paste(filename_prefix, "ensemble_year.Rda", sep="_")))
+    save(ensemble_day,
+         file=file.path(results_folder, paste(filename_prefix, "ensemble_day.Rda", sep="_")))
+    save(ensemble_month,
+         file=file.path(results_folder, paste(filename_prefix, "ensemble_month.Rda", sep="_")))
   }
   
   
@@ -698,15 +705,20 @@ read_GCM_NCDF = function(boundingBox = c(latMin = 1,latMax = 3,lonMin = -76,lonM
   # -----------------------------------
   # saves dataframes with the results of historic observations
   
-  save(data_y,file=paste(main_folder,results_folder,"/",paste(modelName,"observed",variableName,"year.Rda",sep="_"),sep=""))
-  save(data_m,file=paste(main_folder,results_folder,"/",paste(modelName,"observed",variableName,"month.Rda",sep="_"),sep=""))
-  save(data_d,file=paste(main_folder,results_folder,"/",paste(modelName,"observed",variableName,"day.Rda",sep="_"),sep=""))
+  save(data_y,
+       file=file.path(results_folder, paste(modelName, "observed", variableName, "year.Rda", sep="_")))
+  save(data_m,
+       file=file.path(results_folder, paste(modelName, "observed", variableName, "month.Rda", sep="_")))
+  save(data_d,
+       file=file.path(results_folder, paste(modelName, "observed", variableName, "day.Rda", sep="_")))
   
   # --------------------------------------
   # PART 3 MAKES A FEW PLOTS, EXPORTED IN PDF FORMAT:
   # --------------------------------------
   
-  pdf(file=paste(main_folder,results_folder,"/",paste(modelName,fConc,variableName,'PLOT.pdf',sep="_"),sep=""), height=8.5, width=11, onefile=TRUE, family='Helvetica', paper="a4r", pointsize=12)   
+  pdf(
+    file=file.path(results_folder, paste(modelName, fConc, variableName, 'PLOT.pdf', sep="_")),
+    height=8.5, width=11, onefile=TRUE, family='Helvetica', paper="a4r", pointsize=12)
   par(mfrow = c(3,1))
   par(mar = c(4,4,3,2))
   ## a. plots the context map:
@@ -767,7 +779,7 @@ read_GCM_NCDF = function(boundingBox = c(latMin = 1,latMax = 3,lonMin = -76,lonM
   for (Experiment in Experiments) {
 
     fConc = Experiment
-    load(file=paste(main_folder,results_folder,"/",paste(modelName,fConc,variableName,"ensemble_year.Rda",sep="_"),sep=""))
+    load(file=file.path(results_folder, paste(modelName, fConc, variableName, "ensemble_year.Rda", sep="_")))
     
     nplot_exp = nplot_exp +  1
     
@@ -827,7 +839,7 @@ read_GCM_NCDF = function(boundingBox = c(latMin = 1,latMax = 3,lonMin = -76,lonM
   
   dev.off()
   
-  save(df, file = paste0(mFolder,rFolder,"df.Rda"))
+  save(df, file = file.path(rFolder, "df.Rda"))
 }
 
 #----------------------------------------------------------------------------------
@@ -2736,7 +2748,10 @@ extremePR_GPD = function(modelName = "MPI-ESM-MR",
   obsYold <- aggregate(obsOld$avg_value, by = list(obsOld$Year), sum,na.rm=TRUE)
   
   #overwrite the observed values 
-  save(data_d,file=paste(main_folder,results_folder,"/",paste(modelName,"observed", "pr",futures,"day_ExtremesCorrected_OldMethod.Rda",sep="_"),sep=""))
+  save(data_d,
+       file=file.path(
+         results_folder,
+         paste(modelName, "observed", "pr", futures, "day_ExtremesCorrected_OldMethod.Rda", sep="_")))
   dev.off()
   
 }  #end extreme gpd
