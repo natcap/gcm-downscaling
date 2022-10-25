@@ -373,7 +373,6 @@ read_GCM_NCDF = function(boundingBox = c(latMin = 1,latMax = 3,lonMin = -76,lonM
         
     calendar <- ncatt_get(control, "time", "calendar")
     baseDate <- as.character(ncatt_get(control, "time", "units"))
-    print(baseDate) #TODO: skip experiments that have broken baseDate?
     if (!grepl("days since", baseDate[2], fixed=TRUE)) {
       print("COULD NOT PARSE NetCDF TIME ATTRIBUTE BASE DATE")
       print("skipping this experiment")
@@ -391,13 +390,19 @@ read_GCM_NCDF = function(boundingBox = c(latMin = 1,latMax = 3,lonMin = -76,lonM
       baseDay <- as.numeric(substr(baseDate, 8,8))
     }
 
-    df$BaseDay <- baseDay
-    df$BaseMonth <- baseMonth
-    df$BaseYear<- baseYear
+    df[df$Model == model & df$Experiment == Experiment, "BaseDay"] <- baseDay
+    df[df$Model == model & df$Experiment == Experiment, "BaseMonth"] <- baseMonth
+    df[df$Model == model & df$Experiment == Experiment, "BaseYear"] <- baseYear
 
-    df3$BaseDay <- baseDay
-    df3$BaseMonth <- baseMonth
-    df3$BaseYear <- baseYear
+    # It doesn't seem to make sense to fill all rows of df with these values    
+    # df$BaseDay <- baseDay
+    # df$BaseMonth <- baseMonth
+    # df$BaseYear<- baseYear
+
+    # df3 not used anywhere
+    # df3$BaseDay <- baseDay
+    # df3$BaseMonth <- baseMonth
+    # df3$BaseYear <- baseYear
         
     #  if(experiment == "hist-rcp85"){
     #      rDate = c(month = baseMonth, day = baseDay, year = baseYear)
@@ -439,14 +444,15 @@ read_GCM_NCDF = function(boundingBox = c(latMin = 1,latMax = 3,lonMin = -76,lonM
     Lon_idx_Range <- c(which.min(abs(lonMax-lonmat)):which.min(abs(lonMin-lonmat)))
                                            
 
-    if(length(timeIdxs)%%365 == 0) # checks if is using 365 day or not, assumes if not 365 day is using leap days
-    {
+    if(length(timeIdxs)%%365 == 0) { # checks if is using 365 day or not, assumes if not 365 day is using leap days
       LeapFix <- "Yes"
-      df$LeapFix <- "Yes"
+      # df$LeapFix <- "Yes"
+      df[df$Model == model & df$Experiment == Experiment, "LeapFix"] <- LeapFix
       
     } else {
       LeapFix <- "No"
-      df$LeapFix <- "No"
+      # df$LeapFix <- "No"
+      df[df$Model == model & df$Experiment == Experiment, "LeapFix"] <- LeapFix
     }
     
     startTime = 1
@@ -838,7 +844,6 @@ read_GCM_NCDF = function(boundingBox = c(latMin = 1,latMax = 3,lonMin = -76,lonM
   axis(2, 1:dim(Rcd)[2], labels = colnames(Rcd)) # places station names as the y-axis labels
   
   dev.off()
-  
   save(df, file = file.path(rFolder, "df.Rda"))
 }
 
@@ -1275,48 +1280,48 @@ knn_bootstrap = function(refDate = c(month = 1, day = 1, year = 1850),
   
   # LOADS HISTORICAL GCM DATA
   # fPath <- paste(main_folder,results_folder,'/',modelName,'/',sep="")
-  fPath <- paste(main_folder,results_folder,'/',sep="")
+  # fPath <- paste(main_folder,results_folder,'/',sep="")
   fConc = futures
   
-  fName = paste(fPath,paste(modelName,'historical',varName,"ensemble_day.Rda",sep="_"),sep="")
-  load(fName,verbose=TRUE)    
+  fName = file.path(results_folder, paste(modelName,'historical',varName,"ensemble_day.Rda",sep="_"))
+  load(fName,verbose=TRUE)
   
   ensemble_day$month_idx = (ensemble_day$time_year - refDate[3]) * 12 + ensemble_day$time_month
   ensemble_day_h <- ensemble_day[ensemble_day$time_year >= minObsYear & ensemble_day$time_year <= maxObsYear,]
   ensemble_day_h$julian_day <- julian(ensemble_day_h$time_month,ensemble_day_h$time_day,1850,origin = c(month = 1, day = 1, 1850))
   
-  fName = paste(fPath,paste(modelName,'historical',varName,"ensemble_year.Rda",sep="_"),sep="")
+  fName = file.path(results_folder, paste(modelName,'historical',varName,"ensemble_year.Rda",sep="_"))
   load(fName,verbose=TRUE)   
   ensemble_year_h <- ensemble_year[ensemble_year$time_year >= minObsYear & ensemble_year$time_year <= maxObsYear,]
   
-  fName = paste(fPath,paste(modelName,'historical',varName,"ensemble_month.Rda",sep="_"),sep="")
+  fName = file.path(results_folder, paste(modelName,'historical',varName,"ensemble_month.Rda",sep="_"))
   load(fName)   
   ensemble_month_h <- ensemble_month[ensemble_month$time_year >= minObsYear & ensemble_month$time_year <= maxObsYear,]
   
   # LOADS FUTURE GCM DATA
   fConc = futures
   
-  fName = paste(fPath,paste(modelName,fConc,varName,"ensemble_day.Rda",sep="_"),sep="")
+  fName = file.path(results_folder, paste(modelName,fConc,varName,"ensemble_day.Rda",sep="_"))
   load(fName,verbose=TRUE)    
   ensemble_day$month_idx = (ensemble_day$time_year - refDate[3]) * 12 + ensemble_day$time_month
   ensemble_day_f <- ensemble_day[ensemble_day$time_year >= minGCMYear & ensemble_day$time_year <= maxGCMYear,]
   ensemble_day_f$julian_day <- julian(ensemble_day_f$time_month,ensemble_day_f$time_day,1850,origin = c(month = 1, day = 1, 1850))
 
-  fName = paste(fPath,paste(modelName,fConc,varName,"ensemble_year.Rda",sep="_"),sep="")
+  fName = file.path(results_folder, paste(modelName,fConc,varName,"ensemble_year.Rda",sep="_"))
   load(fName,verbose=TRUE)   
   ensemble_year_f <- ensemble_year[ensemble_year$time_year >= minGCMYear & ensemble_year$time_year <= maxGCMYear,]
 
-  fName = paste(fPath,paste(modelName,fConc,varName,"ensemble_month.Rda",sep="_"),sep="")
+  fName = file.path(results_folder, paste(modelName,fConc,varName,"ensemble_month.Rda",sep="_"))
   load(fName)   
   ensemble_month_f <- ensemble_month[ensemble_month$time_year >= minGCMYear & ensemble_month$time_year <= maxGCMYear,]
   
   # observed historic
 
-  fName = paste(fPath,paste(modelName, "observed", varName,"day.Rda",sep="_"),sep="")
+  fName = file.path(results_folder, paste(modelName, "observed", varName,"day.Rda",sep="_"))
   load(fName,verbose=TRUE)
-  fName = paste(fPath,paste(modelName, "observed", varName,"year.Rda",sep="_"),sep="")
+  fName = file.path(results_folder, paste(modelName, "observed", varName,"year.Rda",sep="_"))
   load(fName,verbose=TRUE)
-  fName = paste(fPath,paste(modelName, "observed", varName,"month.Rda",sep="_"),sep="")
+  fName = file.path(results_folder, paste(modelName, "observed", varName,"month.Rda",sep="_"))
   load(fName,verbose=TRUE)
   
   #------------------------------------------------------------------------------------------------------------
@@ -1468,7 +1473,7 @@ knn_bootstrap = function(refDate = c(month = 1, day = 1, year = 1850),
   
   for (y in 1:nYears) {
     # Generates the JOINT PROBABILITY SHIFT from a data_set informed by the GCM. Sum(jp_shift) must be equal to 0)
-    print(c(y,"of",nYears))
+    print(paste(y, "of", nYears, "years"))
     if(JPmode == "Yearly")
     {
       gcm_ref_idx_f = which(ensemble_day_f$time_year == minGCMYear + y - 1) 
@@ -1940,20 +1945,32 @@ knn_bootstrap = function(refDate = c(month = 1, day = 1, year = 1850),
     bs_excorr <- as.data.frame(t(bs_excorr))
     colnames(bs_excorr) <- c("bs_pctl", "GPDalphaDiff", "GPDThreshRatio", "GPDbetaRatio")
     
-    save(bs_excorr,file=paste(fPath,paste(modelName,"bs", "pr",futures,"day_ExtremesCorrected_key.Rda",sep="_"),sep=""))
+    save(bs_excorr, file=file.path(
+      results_folder,
+      paste(modelName, "bs", "pr", futures, "day_ExtremesCorrected_key.Rda", sep="_")))
   }
   
   # saves a CSV
-  write.table(bs_result,paste(fPath,paste(modelName,fConc,varName,expNumber,"bootstrap.csv",sep="_"),sep=""), sep=",",row.names=FALSE)
+  write.table(bs_result,
+              file.path(
+                results_folder,
+                paste(modelName, fConc, varName, expNumber, "bootstrap.csv", sep="_")),
+              sep=",",
+              row.names=FALSE)
   
   # Saves the data frame with the bootstraped signal
-  save(bs_result,file=paste(fPath,paste(modelName,fConc,varName,expNumber,"bootstrap.Rda",sep="_"),sep=""))
+  save(bs_result,
+       file=file.path(
+         results_folder,
+         paste(modelName, fConc, varName, expNumber, "bootstrap.Rda", sep="_")))
   
   #----------------------------------------------------------------------
   # Plots to show the seasonal patterns in the observation and in the GCM
   #----------------------------------------------------------------------
   
-  pdf(file=paste0(fPath,modelName,'_',fConc,"_",varName,'_Bootstrap_Boxplots.pdf',sep=""), height=8, width=14, onefile=TRUE, family='Helvetica', paper="a4r", pointsize=12) 
+  pdf(file=file.path(
+    results_folder, paste(modelName, fConc, varName, 'Bootstrap_Boxplots.pdf',sep="_")),
+    height=8, width=14, onefile=TRUE, family='Helvetica', paper="a4r", pointsize=12)
   
   par(mfrow = c(2,1), mar = c(2,4,4,1),xpd = TRUE)
   
@@ -1992,7 +2009,9 @@ knn_bootstrap = function(refDate = c(month = 1, day = 1, year = 1850),
   # Plot Upper/Lower Thresh Comp Plots ####
   #--------------------------------------------------------
   
-  pdf(file=paste0(fPath,modelName,'_',fConc,"_",varName,"_Threshold_Comp_Plots.pdf"), paper = 'a4r', height=8.5, width=11)
+  pdf(
+    file=file.path(results_folder, paste(modelName,'_',fConc,"_",varName,"_Threshold_Comp_Plots.pdf")),
+    paper = 'a4r', height=8.5, width=11)
   par(mfrow = c(1, 1), xpd = TRUE, mar = c(2, 4, 5, 2))
   
   if(JPmode == "Window")
@@ -2040,7 +2059,7 @@ knn_bootstrap = function(refDate = c(month = 1, day = 1, year = 1850),
   
   ## Plot Seasonal Joint Probability Charts for Obersved Historical and Historical GCM Daily Data
   
-  pdf(file=paste0(fPath,modelName,'_',fConc,"_",varName,"_JP_Monthly_plots.pdf"))
+  pdf(file=file.path(results_folder, paste(modelName,'_',fConc,"_",varName,"_JP_Monthly_plots.pdf")))
   par(mfrow = c(3, 3), mar = c(2,3,5.5,2))
   
   high_thr = percentile(data_int$avg_value,1 - extreme_wet_percentile)  # wet/extremely wet thresh for observed historical data   
@@ -2161,7 +2180,7 @@ heatSignal = function(refDate = c(month = 1, day = 1, year = 1850),
   heatSignalLength <- maxGCMYear - minGCMYear + 1 
   # LOADS DATA
   #fPath <- paste(main_folder,results_folder,'/',modelName,'/',sep="")
-  fPath <- paste(main_folder,results_folder,'/',sep="")
+  fPath <- results_folder
   fConc = futures
   
   fName = paste(fPath,paste(modelName,fConc,varName,"ensemble_day.Rda",sep="_"),sep="")

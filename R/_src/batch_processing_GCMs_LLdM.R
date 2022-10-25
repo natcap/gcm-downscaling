@@ -5,7 +5,7 @@ mFolder = "H:/Shared drives/GCM_Climate_Tool"
 rFolder <- "C:/Users/dmf/projects/gcm-project/test-results"
 shp_file_background <- "/required_files/OBSERVATIONS/LLdM_AOI2/SHP/Basin_LldM.shp" # Basin Shapefile
 BootstrapRuns <- 1 # number of iterations to perform of the bootstrapping routine
-CLIMATE_VARS = c("pr", "tas")
+CLIMATE_VARS = c("pr")
 # setwd(mFolder)
 
 ### ------------------------------
@@ -30,7 +30,8 @@ svd_analysis_file = "/required_files/Other/SVD_Table_Comp1_Pac_Atl.csv" #Pacific
 df_dumm = read.csv(
   file.path(mFolder, 'required_files/Other/Archive_list_batch_LLdM_Nov2021 - CMIP6.csv'),
   header=T)
-df = subset(df_dumm,df_dumm$DoIt==1)
+print(df_dumm)
+df = subset(df_dumm, df_dumm$DoIt==1)
 df$BaseDay <- NA
 df$BaseMonth <- NA
 df$BaseYear <- NA
@@ -114,49 +115,50 @@ for(r in 1:1) { #1:nrow(bboxes)
         #   try(dev.off())
         # }
         load(file.path(rFolder, "df.Rda"))
+        # print(df)
       } # next variable
     } # next ensemble
  
     
     load(file.path(rFolder, "df.Rda"))
+    # print(df)
     df1 = subset(df, Model == model)
     exp_model = unique(df1$Experiment)
     exp_model <- exp_model[exp_model != "historical"] # excludes historical experiment from following functions to just have futures
     
-  #---------------------------------------------------------------------------
-  # comparison reports between GCM and observed climate
-    
-    for (ensemble in ensembles){
-      print(paste("ENSEMBLE", ensemble))
-      #Ensemble <- levels(ensemble)[1]
-      rcp_pr_ind <- which(df$Model == model & df$Ensemble == ensemble) # just to find base date of a future scenario
-      print(experiment)
-      rcp_tas_ind <- which(df$Model == model & df$Experiment == experiment)
-      
-      for (experiment2 in exp_model) {
-        print(paste("EXPERIMENT", experiment2))
-      
-        print("COMPARE GCM")
-        # try(
-        compare_GCM(refDate = c(month = df$BaseMonth[rcp_pr_ind], day = df$BaseDay[rcp_pr_ind], year = df$BaseYear[rcp_pr_ind]),
-                      main_folder = mFolder,
-                      results_folder = rFolder,
-                      enso_signal_file = enso_signal_file,
-                      svd_analysis_file = svd_analysis_file,
-                      modelName = model,
-                      historical = "historical",
-                      futures = experiment2, #experiment,
-                      varName = "pr",
-                      varLabel = "Precipitation (mm)",
-                      minObsYear = 1981,
-                      maxObsYear = 2016,
-                      minGCMYear = 2015,
-                      maxGCMYear = 2099,
-                      alignHistYears = TRUE)
-        # )
- 
-      } # next experiment
-    } # next n ensemble member
+    #---------------------------------------------------------------------------
+    # comparison reports between GCM and observed climate
+    # for (ensemble in ensembles){
+    #   print(paste("ENSEMBLE", ensemble))
+    #   #Ensemble <- levels(ensemble)[1]
+    #   rcp_pr_ind <- which(df$Model == model & df$Ensemble == ensemble) # just to find base date of a future scenario
+    #   print(experiment)
+    #   rcp_tas_ind <- which(df$Model == model & df$Experiment == experiment)
+    #   
+    #   for (experiment2 in exp_model) {
+    #     print(paste("EXPERIMENT", experiment2))
+    #     
+    #     print("COMPARE GCM")
+    #     # try(
+    #     compare_GCM(refDate = c(month = df$BaseMonth[rcp_pr_ind], day = df$BaseDay[rcp_pr_ind], year = df$BaseYear[rcp_pr_ind]),
+    #                   main_folder = mFolder,
+    #                   results_folder = rFolder,
+    #                   enso_signal_file = enso_signal_file,
+    #                   svd_analysis_file = svd_analysis_file,
+    #                   modelName = model,
+    #                   historical = "historical",
+    #                   futures = experiment2, #experiment,
+    #                   varName = "pr",
+    #                   varLabel = "Precipitation (mm)",
+    #                   minObsYear = 1981,
+    #                   maxObsYear = 2016,
+    #                   minGCMYear = 2015,
+    #                   maxGCMYear = 2099,
+    #                   alignHistYears = TRUE)
+    #     # )
+    # 
+    #   } # next experiment
+    # } # next n ensemble member
   } #next model     
   
   #-----------------------------------------------------------
@@ -167,18 +169,26 @@ for(r in 1:1) { #1:nrow(bboxes)
   for (model in models) {
     print(paste("MODEL", model))
     model_results_path = file.path(rFolder, model)
-    load(file.path(model_results_path, "df.Rda"))
+    load(file.path(rFolder, "df.Rda"))
     df1 = subset(df, Model == model)
     exp_model = unique(df1$Experiment)
     exp_model <- exp_model[exp_model != "historical"] # excludes historical experiment from following functions to just have futures
 
     # rFolder = paste0(paste0(rFolderMain, model, ""))
-    
+
     # Optional: update of extremes Obs based (data_d) of GCM Results.
     # The future reference year represents the upper boundary year for which new extremes are derived
 
     for (experiment2 in exp_model) {
       print(paste("EXPERIMENT", experiment2))
+      # refDate = c(month = df$BaseMonth[rcp_pr_ind], day = df$BaseDay[rcp_pr_ind], year = df$BaseYear[rcp_pr_ind])
+      experiment_date = df[
+        df$Variable == "pr" & df$Model == model & df$Experiment == experiment2,
+        c("BaseDay", "BaseMonth", "BaseYear")]
+      refDate = c(
+        month = experiment_date$BaseMonth,
+        day = experiment_date$BaseDay,
+        year = experiment_date$BaseYear)
 
      # Legacy function. now the extreme value correction is done inside the KNN_BOOTSTRAP function
      #
@@ -190,56 +200,59 @@ for(r in 1:1) { #1:nrow(bboxes)
      #                  minGCMYear = 2015,
      #                  maxGCMYear = 2099))
 
+      for (n in 1:BootstrapRuns) {
+        if ("pr" %in% CLIMATE_VARS) {
+          print(paste("KNN BOOTSTRAP n =", n))
+          # try(
+          knn_bootstrap(refDate = refDate,
+                        main_folder = mFolder,
+                        results_folder = model_results_path,
+                        modelName = model,              #"CCSM4",
+                        futures = experiment2,
+                        varName = "pr",
+                        varLabel = "Precipitation [mm]",
+                        minObsYear = 1980,
+                        maxObsYear = 2015,
+                        nearWindow = 30,
+                        minGCMYear = 2020,
+                        maxGCMYear = 2050,
+                        expNumber = n,
+                        JPmode = "Window",
+                        alignHistYears = TRUE,
+                        HistRepro = FALSE)
+          # )
+        }
+        if ("tas" %in% CLIMATE_VARS) {
+          print("HEAT SIGNAL BOOTSTRAP n =", n)
+          # try(
+          heatSignal(refDate = refDate,
+                     main_folder = mFolder,
+                     results_folder = model_results_path,
+                     modelName = model,
+                     futures = experiment2,
+                     varName = "tas",
+                     varLabel = "Temperature [c]",
+                     minObsYear = 1980,
+                     maxObsYear = 2015,
+                     minGCMYear = 2020,
+                     maxGCMYear = 2050)
+          # )  
+        }
+        
 
-    for (n in 1:BootstrapRuns){
-      print("KNN BOOTSTRAP n =", n)
-      # try(
-      knn_bootstrap(refDate = c(month = df$BaseMonth[rcp_pr_ind], day = df$BaseDay[rcp_pr_ind], year = df$BaseYear[rcp_pr_ind]),
-                      main_folder = mFolder,
-                      results_folder = model_results_path,
-                      modelName = model,              #"CCSM4",
-                      futures = experiment2,
-                      varName = "pr",
-                      varLabel = "Precipitation [mm]",
-                      minObsYear = 1980,
-                      maxObsYear = 2015,
-                      nearWindow = 30,
-                      minGCMYear = 2020,
-                      maxGCMYear = 2050,
-                      expNumber = n,
-                      JPmode = "Window",
-                      alignHistYears = TRUE,
-                      HistRepro = FALSE)
-      # )
 
-      print("HEAT SIGNAL BOOTSTRAP n =", n)
-      # try(
-      heatSignal(refDate = c(month = df$BaseMonth[rcp_tas_ind], day = df$BaseDay[rcp_tas_ind], year = df$BaseYear[rcp_tas_ind]), #rDate,
-                   main_folder = mFolder,
-                   results_folder = rFolder,
-                   modelName = model,
-                   futures = experiment2,
-                   varName = "tas",
-                   varLabel = "Temperature [c]",
-                   minObsYear = 1980,
-                   maxObsYear = 2015,
-                   minGCMYear = 2020,
-                   maxGCMYear = 2050)
-      # )
+        # try(sinteticSeries(refDate = c(month = df$BaseMonth[rcp_pr_ind], day = df$BaseDay[rcp_pr_ind], year = df$BaseYear[rcp_pr_ind]),
+        #                    modelName = model,
+        #                    futures = experiment2,
+        #                    main_folder = mFolder,
+        #                    results_folder = rFolder,
+        #                    expNumber = n,
+        #                    fullObsCatalog = FALSE,
+        #                    HistRepro = FALSE,
+        #                    minObsYear = 1980,
+        #                    maxObsYear = 2015))
 
-
-      # try(sinteticSeries(refDate = c(month = df$BaseMonth[rcp_pr_ind], day = df$BaseDay[rcp_pr_ind], year = df$BaseYear[rcp_pr_ind]),
-      #                    modelName = model,
-      #                    futures = experiment2,
-      #                    main_folder = mFolder,
-      #                    results_folder = rFolder,
-      #                    expNumber = n,
-      #                    fullObsCatalog = FALSE,
-      #                    HistRepro = FALSE,
-      #                    minObsYear = 1980,
-      #                    maxObsYear = 2015))
-
-     }  # next bootstrap
+      }  # next bootstrap
     } #next experiment
   } # next model
 } # next region
