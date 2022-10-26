@@ -17,8 +17,7 @@ def tri_state_joint_probability(timeseries, lower_bound, upper_bound):
 
     a = timeseries[:-1]
     b = timeseries[1:]
-    print(a)
-    print(b)
+
     a_low_mask = a <= lower_bound
     jp_matrix[0, 0] = numpy.count_nonzero(b[a_low_mask] <= lower_bound)
     jp_matrix[0, 2] = numpy.count_nonzero(b[a_low_mask] > upper_bound)
@@ -30,12 +29,11 @@ def tri_state_joint_probability(timeseries, lower_bound, upper_bound):
     jp_matrix[2, 2] = numpy.count_nonzero(b[a_high_mask] > upper_bound)
     jp_matrix[2, 1] = numpy.count_nonzero(
         numpy.count_nonzero(a_high_mask) - jp_matrix[2, 0] - jp_matrix[2, 2])
-    
+
     a_med_mask = (a > lower_bound) & (a <= upper_bound)
-    print(a_med_mask)
     jp_matrix[1, 0] = numpy.count_nonzero(b[a_med_mask] <= lower_bound)
     jp_matrix[1, 2] = numpy.count_nonzero(b[a_med_mask] > upper_bound)
     jp_matrix[1, 1] = numpy.count_nonzero(
         numpy.count_nonzero(a_med_mask) - jp_matrix[1, 0] - jp_matrix[1, 2])
-    print(jp_matrix)
+
     return (jp_matrix / numpy.sum(jp_matrix))

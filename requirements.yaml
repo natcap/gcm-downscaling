@@ -2,7 +2,9 @@ channels:
 - conda-forge
 - defaults
 dependencies:
-- numpy
-- xarray
+- dask
 - netCDF4
+- numpy
+- pandas
 - pytest
+- xarray
