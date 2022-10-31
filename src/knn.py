@@ -1,6 +1,7 @@
 import os
 
 import pandas
+import pygeoprocessing
 import xarray
 
 from .joint_probability import tri_state_joint_probability
@@ -12,7 +13,7 @@ REF_PERIOD_START_DATE = '1985-01-01'
 REF_PERIOD_END_DATE = '2014-12-31'
 PREDICTION_PERIOD_START_DATE = '2015-01-01'
 PREDICTION_PERIOD_END_DATE = '2015-01-31'
-DATA_STORE_PATH = 'H://Shared drives/GCM_Climate_Tool/required_files/GCMs'
+DATA_STORE_PATH = 'H://Shared drives/GCM_Climate_Tool/required_files'
 
 
 def compute_delta_jp_matrices(
@@ -60,15 +61,33 @@ def compute_delta_jp_matrices(
     return jp_delta_matrix_lookup
 
 
+def shift_longitude_from_360(dataset):
+    if 'lon' in dataset.dims:
+        return dataset.assign_coords(lon=(((mfds.lon + 180) % 360) - 180))
+    raise ValueError('Could not reassign longitude coordinates,'
+                     'No dimension "lon" in ')
+
+
+def slice_from_bbox(dataset, minx, miny, maxx, maxy):
+    return dataset.isel(
+        lon=(mfds.lon > minx) & (mfds.lon < maxx),
+        lat=(mfds.lat > miny) & (mfds.lat < maxy))
+
+
 if __name__ == "__main__":
     historical_ds_path = os.path.join(
         DATA_STORE_PATH,
-        'Amazon__pr_day_CanESM5_historical_r1i1p1f1_gn_18500101-20141231.nc')
+        'GCMs/Amazon__pr_day_CanESM5_historical_r1i1p1f1_gn_18500101-20141231.nc')
     future_ds_path = os.path.join(
         DATA_STORE_PATH,
-        'Amazon__pr_day_CanESM5_ssp126_r1i1p1f1_gn_20150101-21001231.nc')
+        'GCMs/Amazon__pr_day_CanESM5_ssp126_r1i1p1f1_gn_20150101-21001231.nc')
+    aoi_path = os.path.join(
+        DATA_STORE_PATH, 'OBSERVATIONS/LLdM_AOI2/SHP/Basin_LldM.shp')
+
+    bbox_xyxy = pygeoprocessing.get_vector_info(aoi_path)['bounding_box']
 
     with xarray.open_mfdataset([historical_ds_path, future_ds_path]) as mfds:
+        mfds = shift_longitude_from_360(mfds)
         jp_delta_matrix_lookup = compute_delta_jp_matrices(
             mfds.isel(lon=0, lat=0),  # for now, take first location
             REF_PERIOD_START_DATE,

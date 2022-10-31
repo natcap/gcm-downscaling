@@ -3,8 +3,11 @@ channels:
 - defaults
 dependencies:
 - dask
+- ipython
+- matplotlib
 - netCDF4
 - numpy
 - pandas
+- pygeoprocessing
 - pytest
 - xarray
