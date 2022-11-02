@@ -7,8 +7,8 @@ def tri_state_joint_probability(timeseries, lower_bound, upper_bound):
 
     Args:
         timeseries (numpy.array): a 1-dimensional array.
-        lower_bound (float): the lower boundary (inclusive) of the middle bin.
-        upper_bound (float): the upper boundary of the middle bin.
+        lower_bound (float): the lower boundary of the middle bin.
+        upper_bound (float): the upper boundary (inclusive) of the middle bin.
 
     Returns:
         (numpy.array): a 2-dimensional array of joint probabilities.

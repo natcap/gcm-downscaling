@@ -14,6 +14,51 @@ class TestKNN(unittest.TestCase):
     def tearDown(self):
         pass
 
+    def test_state_transition_sequence(self):
+        """Test create sequence of state transitions."""
+        from .. import knn
+
+        array = numpy.array([0, 0, 0, 5, 2, 1, 0, 0, 9, 8, 0])
+        expected_array = [
+            'AA', 'AA', 'AB', 'BA', 'AA',
+            'AA', 'AA', 'AC', 'CC', 'CA']
+        lower_bound = 3
+        upper_bound = 7
+        transitions = knn.state_transition_table(
+            array, lower_bound, upper_bound)
+        numpy.testing.assert_array_equal(transitions, expected_array)
+
+    def test_jp_matrix_from_transitions_sequence(self):
+        """Test joint probablity matrix from sequence of transitions."""
+        from .. import knn
+
+        n = 900
+        reference_start_date = '1980-01-01'
+        reference_end_date = '1989-12-31'
+        ref_dates = pandas.date_range(reference_start_date, reference_end_date)
+        ref_dates = ref_dates[:n]
+        month = 6
+        day = 20
+        near_window = 4
+
+        sample_transitions = [
+            'AA', 'AB', 'AC', 'BA', 'BB', 'BC', 'CA', 'CB', 'AA']
+        transitions = numpy.empty(ref_dates.shape, dtype="U2")
+        transitions[:] = 100 * sample_transitions
+
+        # Our sample_transitions pattern repeats every 9 days, and a full
+        # window sequence is 9 days, so the expected frequencies of
+        # transitions in the computed matrix match the frequencies of
+        # occurrence in sample_transitions:
+        expected_matrix = numpy.array([
+            [0.222222, 0.111111, 0.111111],
+            [0.111111, 0.111111, 0.111111],
+            [0.111111, 0.111111, 0.0]
+        ])
+        jp_matrix = knn.jp_matrix_from_transitions_sequence(
+            ref_dates, transitions, month, day, near_window)
+        numpy.testing.assert_array_almost_equal(jp_matrix, expected_matrix)
+
     def test_compute_delta_jp_matrices_prediction_dates(self):
         """Test compute_delta_jp_matrices raises ValueError."""
         from .. import knn
