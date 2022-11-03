@@ -1,7 +1,6 @@
 import unittest
 
 import numpy
-import pandas
 import xarray
 
 
@@ -35,7 +34,8 @@ class TestKNN(unittest.TestCase):
         n = 900
         reference_start_date = '1980-01-01'
         reference_end_date = '1989-12-31'
-        ref_dates = pandas.date_range(reference_start_date, reference_end_date)
+        ref_dates = xarray.date_range(
+            reference_start_date, reference_end_date, calendar='noleap')
         ref_dates = ref_dates[:n]
         month = 6
         day = 20
@@ -43,7 +43,7 @@ class TestKNN(unittest.TestCase):
 
         sample_transitions = [
             'AA', 'AB', 'AC', 'BA', 'BB', 'BC', 'CA', 'CB', 'AA']
-        transitions = numpy.empty(ref_dates.shape, dtype="U2")
+        transitions = numpy.empty(ref_dates.shape, dtype='U2')
         transitions[:] = 100 * sample_transitions
 
         # Our sample_transitions pattern repeats every 9 days, and a full
@@ -67,7 +67,8 @@ class TestKNN(unittest.TestCase):
         lats = [20.0]
         gcm_start_date = '1980-01-01'
         gcm_end_date = '1990-12-31'
-        times = pandas.date_range(gcm_start_date, gcm_end_date)
+        times = xarray.date_range(
+            gcm_start_date, gcm_end_date, use_cftime=True)
 
         lower_bound = 3
         upper_bound = 7
@@ -89,12 +90,11 @@ class TestKNN(unittest.TestCase):
 
         reference_start_date = gcm_start_date
         reference_end_date = '1985-01-01'
-
         prediction_start_date = '1986-01-01'
         prediction_end_date = '1995-01-01'  # after gcm_end_date
         with self.assertRaises(ValueError) as cm:
             knn.compute_delta_jp_matrices(
-                ds, reference_start_date, reference_end_date,
+                ds.isel(lon=0, lat=0), reference_start_date, reference_end_date,
                 prediction_start_date, prediction_end_date,
                 lower_bound, upper_bound)
         self.assertTrue(
@@ -104,7 +104,7 @@ class TestKNN(unittest.TestCase):
         prediction_end_date = '1990-01-01'
         with self.assertRaises(ValueError) as cm:
             knn.compute_delta_jp_matrices(
-                ds, reference_start_date, reference_end_date,
+                ds.isel(lon=0, lat=0), reference_start_date, reference_end_date,
                 prediction_start_date, prediction_end_date,
                 lower_bound, upper_bound)
         self.assertTrue(
