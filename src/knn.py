@@ -1,3 +1,5 @@
+from collections import defaultdict
+import logging
 import os
 
 import numpy
@@ -7,6 +9,8 @@ import pygeoprocessing
 import xarray
 
 from .joint_probability import tri_state_joint_probability
+
+LOGGER = logging.getLogger(__name__)
 
 LOWER_BOUND = 2.0e-06  # units of the GCM pr variable
 UPPER_BOUND = 4.0e-06  # upper is included in middle bin, lower is not
@@ -69,17 +73,21 @@ def jp_matrix_from_transitions_sequence(
 
 def compute_historical_jp_matrices(
         transitions_array, reference_start_date, reference_end_date):
+    LOGGER.info(
+        f'computing JP matrices for historical reference period '
+        f'{reference_start_date} : {reference_end_date}')
     # Need a calendar, an arbitrary leap-year,
     # to collect all Jan 1sts, Jan 2nds, etc in the reference period
     caldates = pandas.date_range('1980-01-01', '1980-12-31')
     ref_period_dates = pandas.date_range(
         reference_start_date, reference_end_date)
+    # import pdb; pdb.set_trace()
     assert(len(ref_period_dates) == len(transitions_array))
 
     # for each calendar day:
-    jp_matrix_dict = {}
+    jp_matrix_dict = defaultdict(dict)
     for date in caldates:
-        jp_matrix_dict[date] = jp_matrix_from_transitions_sequence(
+        jp_matrix_dict[date.month][date.day] = jp_matrix_from_transitions_sequence(
             ref_period_dates, transitions_array,
             date.month, date.day, NEAR_WINDOW)
 
@@ -90,7 +98,6 @@ def compute_delta_jp_matrices(
         gcm_dataset, reference_start_date, reference_end_date,
         prediction_start_date, prediction_end_date,
         lower_bound, upper_bound):
-
     jp_delta_matrix_lookup = {}
 
     precip_array = gcm_dataset.sel(
@@ -99,7 +106,10 @@ def compute_delta_jp_matrices(
         precip_array, lower_bound, upper_bound)
     historic_gcm_jp_matrix_lookup = compute_historical_jp_matrices(
         transitions_array, reference_start_date, reference_end_date)
-    
+
+    LOGGER.info(
+        f'computing GCM delta matrices for period '
+        f'{prediction_start_date} : {prediction_end_date}')
     date_offset = pandas.DateOffset(days=NEAR_WINDOW)
     gcm_start_date = gcm_dataset.time.min().values
     gcm_end_date = gcm_dataset.time.max().values
@@ -123,9 +133,9 @@ def compute_delta_jp_matrices(
             window_start, window_end)).pr.values
 
         jp_matrix = tri_state_joint_probability(
-            array,
-            lower_bound, upper_bound)
-
+            array, lower_bound, upper_bound)
+        gcm_ref_jp_matrix = historic_gcm_jp_matrix_lookup[base_date.month][base_date.day]
+        # print(gcm_ref_jp_matrix)
         jp_delta_matrix_lookup[base_date] = jp_matrix - gcm_ref_jp_matrix
 
     return jp_delta_matrix_lookup
@@ -211,7 +221,9 @@ if __name__ == "__main__":
             LOWER_BOUND,
             UPPER_BOUND)
 
-    bootstrap_pairs_of_dates(
-        observed_precip_path, REF_PERIOD_START_DATE, REF_PERIOD_END_DATE,
-        PREDICTION_PERIOD_START_DATE, PREDICTION_PERIOD_END_DATE,
-        gcm_jp_delta_matrix_dict)
+    import pdb; pdb.set_trace()
+
+    # bootstrap_pairs_of_dates(
+    #     observed_precip_path, REF_PERIOD_START_DATE, REF_PERIOD_END_DATE,
+    #     PREDICTION_PERIOD_START_DATE, PREDICTION_PERIOD_END_DATE,
+    #     gcm_jp_delta_matrix_dict)
