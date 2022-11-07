@@ -58,8 +58,7 @@ def state_transition_table(array, lower_bound, upper_bound):
 
 
 def jp_matrix_from_transitions_sequence(
-        ref_period_dates_array, transitions_array, month, day, near_window):
-    dates_index = xarray.CFTimeIndex(ref_period_dates_array)
+        dates_index, transitions_array, month, day, near_window):
     idx = numpy.nonzero(
         (dates_index.month == month)
         & (dates_index.day == day))[0]
@@ -80,15 +79,16 @@ def compute_historical_jp_matrices(
         f'{reference_period_time_array.min()} : {reference_period_time_array.max()}')
     # Need a calendar for an arbitrary year
     # to collect all Jan 1sts, Jan 2nds, etc in the reference period
-    caldates = xarray.date_range('1980-01-01', '1980-12-31', calendar="noleap")
+    caldates = date_range_no_leap('1980-01-01', '1980-12-31')
     # We don't know the transition for the final day in the reference period
     reference_period_time_array = reference_period_time_array[:-1]
     assert(len(reference_period_time_array) == len(transitions_array))
 
     jp_matrix_dict = defaultdict(dict)
+    dates_index = pandas.DatetimeIndex(reference_period_time_array)
     for date in caldates:
         jp_matrix_dict[date.month][date.day] = jp_matrix_from_transitions_sequence(
-            reference_period_time_array, transitions_array,
+            dates_index, transitions_array,
             date.month, date.day, NEAR_WINDOW)
 
     return jp_matrix_dict
@@ -96,8 +96,7 @@ def compute_historical_jp_matrices(
 
 def compute_delta_jp_matrices(
         gcm_dataset, reference_start_date, reference_end_date,
-        prediction_start_date, prediction_end_date,
-        lower_bound, upper_bound):
+        simulation_dates_index, lower_bound, upper_bound):
     jp_delta_matrix_lookup = {}
 
     gcm_reference_period_ds = gcm_dataset.sel(
@@ -109,30 +108,12 @@ def compute_delta_jp_matrices(
 
     LOGGER.info(
         f'computing GCM delta matrices for period '
-        f'{prediction_start_date} : {prediction_end_date}')
-    date_offset = datetime.timedelta(days=NEAR_WINDOW)
-    gcm_start_date = gcm_dataset.time.values.min()
-    gcm_end_date = gcm_dataset.time.values.max()
-    # import pdb; pdb.set_trace()
-
-    if ((pandas.Timestamp(prediction_end_date) + date_offset) > gcm_end_date or
-            (pandas.Timestamp(prediction_start_date) - date_offset) < gcm_start_date):
-        raise ValueError(
-            f'the requested prediction period {prediction_start_date} : '
-            f'{prediction_end_date} is outside the time-range of the gcm'
-            f'({gcm_start_date} : {gcm_end_date})')
-
-    for base_date in xarray.date_range(
-            prediction_start_date, prediction_end_date, calendar="noleap"):
-        # "noleap" always creates 365-day years. It also forces cftime-format
-        # dates. Arithmetic with datetime.timedelta is supported. But slicing
-        # into netcdf time dimension is not because the netcdf is either
-        # numpy.datetime or a different cftime calendar. isoformat works.
+        f'{simulation_dates_index.min()} : {simulation_dates_index.max()}')
+    date_offset = pandas.DateOffset(days=NEAR_WINDOW)
+    for base_date in simulation_dates_index:
         window_start = base_date - date_offset
         window_end = base_date + date_offset
-        array = gcm_dataset.sel(
-            time=slice(window_start.isoformat(),
-                       window_end.isoformat())).pr.values
+        array = gcm_dataset.sel(time=slice(window_start, window_end)).pr.values
         # TODO: Is it okay for the window to overlap the historical period?
         # This occurs in the first NEAR_WINDOW/2 days of the prediction
         # period.
@@ -147,26 +128,23 @@ def compute_delta_jp_matrices(
 
 def bootstrap_pairs_of_dates(
         observed_data_path, historical_start_date, historical_end_date,
-        simulation_start_date, simulation_end_date, gcm_jp_delta_matrix_dict):
+        simulation_dates_index, gcm_jp_delta_matrix_dict):
     dates_lookup = {}
     var = 'pr_Beni01'  # sample data has many precip vars, pick one for now
-    simulation_dates = xarray.date_range(
-        simulation_start_date, simulation_end_date, calendar='noleap')
-    historical_dates = xarray.date_range(
-        historical_start_date, historical_end_date, calendar='noleap')
+    historical_dates = date_range_no_leap(
+        historical_start_date, historical_end_date)
 
     obs_df = pandas.read_csv(
         observed_data_path,
         usecols=['Year', 'Month', 'Day', var],
         parse_dates={'date': ['Year', 'Month', 'Day']})
-    # TODO: I don't think it makes sense to average precip values
-    # and then calculate probability matrix; extreme days will be averaged out.
-    mean_precip_doy_array = obs_df.groupby(
-        obs_df.date.dt.dayofyear).mean([var])[var].values
-    observed_ref_jp_matrix = tri_state_joint_probability(
-        mean_precip_doy_array, LOWER_BOUND, UPPER_BOUND)
 
-    a_date = numpy.random.choice(historical_dates)
+    transitions_array = state_transition_table(
+        obs_df[var].values, LOWER_BOUND, UPPER_BOUND)
+    historic_obs_jp_matrix_lookup = compute_historical_jp_matrices(
+        transitions_array, obs_df.date.values)
+
+    a_date = pandas.Timestamp(numpy.random.choice(historical_dates))
 
     if obs_df[obs_df['date'] == a_date][var].values[0] <= LOWER_BOUND:
         init_wet_state = DRY
@@ -178,9 +156,9 @@ def bootstrap_pairs_of_dates(
     init_sim_dict = {
         'historical_date': a_date,
         'wet_state': init_wet_state,
-        'day_of_yr': a_date.dayofyr
+        'day_of_yr': a_date.dayofyear
     }
-    dates_lookup[simulation_dates[0]] = init_sim_dict
+    dates_lookup[simulation_dates_index[0]] = init_sim_dict
     print(dates_lookup)
 
 
@@ -195,6 +173,15 @@ def slice_from_bbox(dataset, minx, miny, maxx, maxy):
     return dataset.isel(
         lon=(dataset.lon > minx) & (dataset.lon < maxx),
         lat=(dataset.lat > miny) & (dataset.lat < maxy))
+
+
+def date_range_no_leap(start, stop):
+    # "noleap" always creates 365-day years. It also forces cftime-format
+    # dates, which is not so convenient. isoformat is more interoperable,
+    # and pandas DatetimeIndex is most convenient for indexing.
+    return pandas.DatetimeIndex(
+        [d.isoformat() for d in
+            xarray.date_range(start, stop, calendar='noleap')])
 
 
 if __name__ == "__main__":
@@ -212,19 +199,32 @@ if __name__ == "__main__":
 
     bbox_xyxy = pygeoprocessing.get_vector_info(aoi_path)['bounding_box']
 
+    simulation_dates_index = date_range_no_leap(
+        PREDICTION_PERIOD_START_DATE,
+        PREDICTION_PERIOD_END_DATE)
+
     with xarray.open_mfdataset(
-            [historical_gcm_path, future_gcm_path], use_cftime=True) as mfds:
+            [historical_gcm_path, future_gcm_path]) as mfds:
+
+        gcm_start_date = mfds.time.values.min()
+        gcm_end_date = mfds.time.values.max()
+        date_offset = datetime.timedelta(days=NEAR_WINDOW)
+        if ((pandas.Timestamp(PREDICTION_PERIOD_END_DATE) + date_offset) > gcm_end_date or
+                (pandas.Timestamp(PREDICTION_PERIOD_START_DATE) - date_offset) < gcm_start_date):
+            raise ValueError(
+                f'the requested prediction period {PREDICTION_PERIOD_START_DATE} : '
+                f'{PREDICTION_PERIOD_END_DATE} is outside the time-range of the gcm'
+                f'({gcm_start_date} : {gcm_end_date})')
+
         mfds = shift_longitude_from_360(mfds)
         gcm_jp_delta_matrix_dict = compute_delta_jp_matrices(
             mfds.isel(lon=0, lat=0),  # for now, take first location
             REF_PERIOD_START_DATE,
             REF_PERIOD_END_DATE,
-            PREDICTION_PERIOD_START_DATE,
-            PREDICTION_PERIOD_END_DATE,
+            simulation_dates_index,
             LOWER_BOUND,
             UPPER_BOUND)
 
-    # bootstrap_pairs_of_dates(
-    #     observed_precip_path, REF_PERIOD_START_DATE, REF_PERIOD_END_DATE,
-    #     PREDICTION_PERIOD_START_DATE, PREDICTION_PERIOD_END_DATE,
-    #     gcm_jp_delta_matrix_dict)
+    bootstrap_pairs_of_dates(
+        observed_precip_path, REF_PERIOD_START_DATE, REF_PERIOD_END_DATE,
+        simulation_dates_index, gcm_jp_delta_matrix_dict)
