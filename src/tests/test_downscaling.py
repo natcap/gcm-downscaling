@@ -125,7 +125,7 @@ class TestJointProbability(unittest.TestCase):
 
     def test_tri_state_joint_probability(self):
         """Test tri_state_joint_probability.py."""
-        from .. import joint_probability
+        from .. import knn
 
         timeseries = numpy.array([0, 0, 0, 5, 2, 1, 0, 0, 9, 8, 0])
         lower_bound = 1.5
@@ -138,7 +138,7 @@ class TestJointProbability(unittest.TestCase):
             [0.1, 0.0, 0.1]
         ])
 
-        actual_matrix = joint_probability.tri_state_joint_probability(
+        actual_matrix = knn.tri_state_joint_probability(
             timeseries, lower_bound, upper_bound)
 
         numpy.testing.assert_array_equal(actual_matrix, expected_matrix)
