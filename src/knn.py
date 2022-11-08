@@ -15,9 +15,9 @@ LOGGER = logging.getLogger(__name__)
 
 LOWER_BOUND = 2.0e-06  # units of the GCM pr variable
 UPPER_BOUND = 4.0e-06  # upper is included in middle bin, lower is not
-DRY = 1
-WET = 2
-VERY_WET = 3
+DRY = 0  # joint-probability matrices are (3, 3) and index at 0.
+WET = 1
+VERY_WET = 2
 TRANSITION_TYPES = numpy.array([
     ['AA', 'AB', 'AC'],
     ['BA', 'BB', 'BC'],
@@ -57,15 +57,23 @@ def state_transition_table(array, lower_bound, upper_bound):
     return transitions
 
 
-def jp_matrix_from_transitions_sequence(
-        dates_index, transitions_array, month, day, near_window):
+def slice_dates_around_dayofyear(dates_index, month, day):
+    # Sometimes the dates_index comes from a historical record, which
+    # could have a 366-day year. So rather than getting a window
+    # around a day-of-year (e.g. day 65), we always get a window
+    # around a month-day date (e.g. March 3).
     idx = numpy.nonzero(
         (dates_index.month == month)
         & (dates_index.day == day))[0]
     # mask to exclude dates with window extending beyond reference period
-    mask = (idx - near_window >= 0) & (idx + near_window < dates_index.size)
-    ranges = [range(x - near_window, x + near_window + 1) for x in idx[mask]]
-    flat_idx = [i for r in ranges for i in r]
+    mask = (idx - NEAR_WINDOW >= 0) & (idx + NEAR_WINDOW < dates_index.size)
+    ranges = [range(x - NEAR_WINDOW, x + NEAR_WINDOW + 1) for x in idx[mask]]
+    return [i for r in ranges for i in r]
+
+
+def jp_matrix_from_transitions_sequence(
+        dates_index, transitions_array, month, day, near_window):
+    flat_idx = slice_dates_around_dayofyear(dates_index, month, day)
     frequencies = [numpy.count_nonzero(transitions_array[flat_idx] == x)
                    for x in TRANSITION_TYPES.flatten()]
     proportions = numpy.array(frequencies) / len(flat_idx)
@@ -84,10 +92,10 @@ def compute_historical_jp_matrices(
     reference_period_time_array = reference_period_time_array[:-1]
     assert(len(reference_period_time_array) == len(transitions_array))
 
-    jp_matrix_dict = defaultdict(dict)
+    jp_matrix_dict = {}  # defaultdict(dict)
     dates_index = pandas.DatetimeIndex(reference_period_time_array)
     for date in caldates:
-        jp_matrix_dict[date.month][date.day] = jp_matrix_from_transitions_sequence(
+        jp_matrix_dict[date.dayofyear] = jp_matrix_from_transitions_sequence(
             dates_index, transitions_array,
             date.month, date.day, NEAR_WINDOW)
 
@@ -97,7 +105,7 @@ def compute_historical_jp_matrices(
 def compute_delta_jp_matrices(
         gcm_dataset, reference_start_date, reference_end_date,
         simulation_dates_index, lower_bound, upper_bound):
-    jp_delta_matrix_lookup = {}
+    jp_delta_matrix_lookup = defaultdict(dict)
 
     gcm_reference_period_ds = gcm_dataset.sel(
         time=slice(reference_start_date, reference_end_date))
@@ -121,7 +129,7 @@ def compute_delta_jp_matrices(
         jp_matrix = tri_state_joint_probability(
             array, lower_bound, upper_bound)
         gcm_ref_jp_matrix = historic_gcm_jp_matrix_lookup[base_date.month][base_date.day]
-        jp_delta_matrix_lookup[base_date] = jp_matrix - gcm_ref_jp_matrix
+        jp_delta_matrix_lookup[base_date.year][base_date.dayofyear] = jp_matrix - gcm_ref_jp_matrix
 
     return jp_delta_matrix_lookup
 
@@ -139,27 +147,64 @@ def bootstrap_pairs_of_dates(
         usecols=['Year', 'Month', 'Day', var],
         parse_dates={'date': ['Year', 'Month', 'Day']})
 
+    # transitions array will have same length as observed precip values, minus 1
+    # for the last day.
     transitions_array = state_transition_table(
         obs_df[var].values, LOWER_BOUND, UPPER_BOUND)
     historic_obs_jp_matrix_lookup = compute_historical_jp_matrices(
         transitions_array, obs_df.date.values)
 
+    # TODO: Should this initial random date be within NEAR_WINDOW days of
+    # the first simulation day-of-year?
     a_date = pandas.Timestamp(numpy.random.choice(historical_dates))
 
-    if obs_df[obs_df['date'] == a_date][var].values[0] <= LOWER_BOUND:
-        init_wet_state = DRY
-    if obs_df[obs_df['date'] == a_date][var].values[0] > UPPER_BOUND:
-        init_wet_state = VERY_WET
-    else:
-        init_wet_state = WET
+    for sim_date in simulation_dates_index:
+        if obs_df[obs_df['date'] == a_date][var].values[0] <= LOWER_BOUND:
+            current_wet_state = DRY
+        if obs_df[obs_df['date'] == a_date][var].values[0] > UPPER_BOUND:
+            current_wet_state = VERY_WET
+        else:
+            current_wet_state = WET
 
-    init_sim_dict = {
-        'historical_date': a_date,
-        'wet_state': init_wet_state,
-        'day_of_yr': a_date.dayofyear
-    }
-    dates_lookup[simulation_dates_index[0]] = init_sim_dict
-    print(dates_lookup)
+        # TODO: not sure we need to track all this, but for diagnostic purposes
+        sim_dict = {
+            'historic_date': a_date,
+            'wet_state': current_wet_state,
+            'day_of_yr': a_date.dayofyear
+        }
+
+        observed_jp_doy = historic_obs_jp_matrix_lookup[sim_date.dayofyear]
+        delta_jp_doy_yr = gcm_jp_delta_matrix_dict[sim_date.year][sim_date.dayofyear]
+        margins_matrix = marginal_probability_of_transitions(
+            observed_jp_doy, delta_jp_doy_yr)
+        next_wet_state = numpy.random.choice(
+            [DRY, WET, VERY_WET], p=margins_matrix[current_wet_state])
+        sim_dict['next_wet_state'] = next_wet_state
+
+        # slice historical record by window around current DOY
+        window_idx = slice_dates_around_dayofyear(
+            obs_df.date, sim_date.month, sim_date.day)
+        # which day-pairs in this slice have the transition we're looking for?
+        matching_transitions = numpy.nonzero(
+            transitions_array[window_idx] ==
+            TRANSITION_TYPES[current_wet_state][next_wet_state])
+        # TODO: implement the "nearest" metric rather than taking a random choice:
+        chosen_idx = numpy.random.choice(matching_transitions)
+        a_date = obs_df.date[chosen_idx]
+        sim_dict['next_historic_date'] = a_date
+
+        dates_lookup[sim_date] = sim_dict
+
+    dataframe = pandas.DataFrame.from_dict(dates_lookup)
+    dataframe.to_csv('boostrapped_dates.csv')
+
+
+def marginal_probability_of_transitions(observed_matrix, delta_matrix):
+    # TODO: is this already implemented in scipy.stats.contingency.margins?
+    projected_jp_matrix = observed_matrix + delta_matrix
+    projected_jp_matrix[projected_jp_matrix < 0] = 0
+    return numpy.apply_along_axis(
+        lambda x: x / x.sum(), 1, projected_jp_matrix)
 
 
 def shift_longitude_from_360(dataset):
