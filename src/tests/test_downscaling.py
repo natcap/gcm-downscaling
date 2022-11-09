@@ -13,6 +13,23 @@ class TestKNN(unittest.TestCase):
     def tearDown(self):
         pass
 
+    def test_slice_dates_around_dayofyear(self):
+        """"""
+        from .. import knn
+
+        dates_index = knn.date_range_no_leap('1979-01-01', '1981-12-31')
+        month = 10
+        day = 16
+        near_window = 10
+        idx = knn.slice_dates_around_dayofyear(
+            dates_index, month, day, near_window)
+
+        # Given the size of the window, and the day, all dates
+        # in the index should be in the same month:
+        self.assertEqual(
+            numpy.count_nonzero(dates_index[idx].month == month),
+            len(idx))
+
     def test_state_transition_sequence(self):
         """Test create sequence of state transitions."""
         from .. import knn
