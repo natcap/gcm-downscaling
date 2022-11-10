@@ -173,10 +173,9 @@ def compute_delta_jp_matrices(
 
 
 def bootstrap_pairs_of_dates(
-        observed_data_path, simulation_dates_index, reference_start_date,
+        observed_data_path, var, simulation_dates_index, reference_start_date,
         reference_end_date, gcm_jp_delta_matrix_dict):
     dates_lookup = {}
-    var = 'pr_Beni01'  # sample data has many precip vars, pick one for now
 
     obs_df = pandas.read_csv(
         observed_data_path,
@@ -236,6 +235,7 @@ def bootstrap_pairs_of_dates(
             TRANSITION_TYPES[current_wet_state][next_wet_state]
 
         # TODO: implement the "nearest" metric rather than taking a random choice:
+        # TODO: matching_idx is intermittently empty?
         chosen_idx = numpy.random.choice(window_idx[matching_idx])
         # the index is from the transitions_array, which aligns to the start of
         # the observational record. We're really interested in the 2nd day of
@@ -289,19 +289,21 @@ def date_range_no_leap(start, stop):
 
 
 if __name__ == "__main__":
+    precip_var = 'pr_Beni01'
+    site_name = 'Beni01'
     observed_precip_path = os.path.join(
-        DATA_STORE_PATH,
-        'OBSERVATIONS/LLdM_AOI2/series_pr_diario.csv')
+        DATA_STORE_PATH, 'OBSERVATIONS/LLdM_AOI2/series_pr_diario.csv')
+    observed_location = os.path.join(
+        DATA_STORE_PATH, 'OBSERVATIONS/LLdM_AOI2/catalogo.csv')
     historical_gcm_path = os.path.join(
         DATA_STORE_PATH, 'GCMs',
         'Amazon__pr_day_CanESM5_historical_r1i1p1f1_gn_18500101-20141231.nc')
     future_gcm_path = os.path.join(
         DATA_STORE_PATH, 'GCMs',
         'Amazon__pr_day_CanESM5_ssp126_r1i1p1f1_gn_20150101-21001231.nc')
-    aoi_path = os.path.join(
-        DATA_STORE_PATH, 'OBSERVATIONS/LLdM_AOI2/SHP/Basin_LldM.shp')
 
-    bbox_xyxy = pygeoprocessing.get_vector_info(aoi_path)['bounding_box']
+    locations = pandas.read_csv(observed_location)
+    lon, lat = locations[locations['CODIGO_CAT'] == site_name][['longitud', 'latitud']].values[0]
 
     simulation_dates_index = date_range_no_leap(
         PREDICTION_PERIOD_START_DATE,
@@ -322,13 +324,14 @@ if __name__ == "__main__":
 
         mfds = shift_longitude_from_360(mfds)
         gcm_jp_delta_matrix_dict = compute_delta_jp_matrices(
-            mfds.isel(lon=0, lat=0),  # for now, take first location
+            mfds.sel(lon=lon, lat=lat, method='nearest'),
             REF_PERIOD_START_DATE,
             REF_PERIOD_END_DATE,
             simulation_dates_index)
 
     bootstrap_pairs_of_dates(
         observed_precip_path,
+        precip_var,
         simulation_dates_index,
         REF_PERIOD_START_DATE,
         REF_PERIOD_END_DATE,
