@@ -136,45 +136,9 @@ def compute_historical_jp_matrices(
     return jp_matrix_dict
 
 
-def compute_delta_jp_matrices(
-        gcm_dataset, reference_start_date, reference_end_date,
-        simulation_dates_index):
-    jp_delta_matrix_lookup = defaultdict(dict)
-
-    gcm_reference_period_ds = gcm_dataset.sel(
-        time=slice(reference_start_date, reference_end_date))
-    lower_bound, upper_bound = numpy.percentile(
-        gcm_reference_period_ds.pr.values, q=PERCENTILE_THRESHOLDS)
-    transitions_array = state_transition_table(
-        gcm_reference_period_ds.pr.values, lower_bound, upper_bound)
-    reference_period_date_index = pandas.DatetimeIndex(
-        gcm_reference_period_ds.time.values)
-    historic_gcm_jp_matrix_lookup = compute_historical_jp_matrices(
-        transitions_array, reference_period_date_index)
-
-    LOGGER.info(
-        f'computing GCM delta matrices for period '
-        f'{simulation_dates_index.min()} : {simulation_dates_index.max()}')
-    date_offset = pandas.DateOffset(days=NEAR_WINDOW)
-    for base_date in simulation_dates_index:
-        window_start = base_date - date_offset
-        window_end = base_date + date_offset
-        array = gcm_dataset.sel(time=slice(window_start, window_end)).pr.values
-        # TODO: Is it okay for the window to overlap the historical period?
-        # This occurs in the first NEAR_WINDOW/2 days of the prediction
-        # period.
-
-        jp_matrix = tri_state_joint_probability(
-            array, lower_bound, upper_bound)
-        gcm_ref_jp_matrix = historic_gcm_jp_matrix_lookup[base_date.month][base_date.day]
-        jp_delta_matrix_lookup[base_date.year][base_date.dayofyear] = jp_matrix - gcm_ref_jp_matrix
-
-    return jp_delta_matrix_lookup
-
-
 def bootstrap_pairs_of_dates(
         observed_data_path, var, simulation_dates_index, reference_start_date,
-        reference_end_date, gcm_jp_delta_matrix_dict):
+        reference_end_date, gcm_dataset):
     dates_lookup = {}
 
     obs_df = pandas.read_csv(
@@ -182,19 +146,27 @@ def bootstrap_pairs_of_dates(
         usecols=['Year', 'Month', 'Day', var],
         parse_dates={'date': ['Year', 'Month', 'Day']})
     obs_df.set_index('date', inplace=True)
-    print(obs_df.shape)
     obs_df = obs_df[reference_start_date: reference_end_date]
-    print(obs_df.shape)
 
     # transitions array will have same length as observed precip values, minus 1
     # for the last day.
-    lower_bound, upper_bound = numpy.percentile(
+    lower_bound_obs, upper_bound_obs = numpy.percentile(
         obs_df[var].values, q=PERCENTILE_THRESHOLDS)
-    print(lower_bound, upper_bound)
-    transitions_array = state_transition_table(
-        obs_df[var].values, lower_bound, upper_bound)
+    transitions_array_obs = state_transition_table(
+        obs_df[var].values, lower_bound_obs, upper_bound_obs)
     historic_obs_jp_matrix_lookup = compute_historical_jp_matrices(
-        transitions_array, obs_df.index)
+        transitions_array_obs, obs_df.index)
+
+    gcm_reference_period_ds = gcm_dataset.sel(
+        time=slice(reference_start_date, reference_end_date))
+    lower_bound_gcm, upper_bound_gcm = numpy.percentile(
+        gcm_reference_period_ds.pr.values, q=PERCENTILE_THRESHOLDS)
+    transitions_array_gcm = state_transition_table(
+        gcm_reference_period_ds.pr.values, lower_bound_gcm, upper_bound_gcm)
+    reference_period_date_index = pandas.DatetimeIndex(
+        gcm_reference_period_ds.time.values)
+    historic_gcm_jp_matrix_lookup = compute_historical_jp_matrices(
+        transitions_array_gcm, reference_period_date_index)
 
     day_one = simulation_dates_index[0]
     window_idx = slice_dates_around_dayofyear(
@@ -207,9 +179,9 @@ def bootstrap_pairs_of_dates(
         # a bug in our indexing....
         precip = obs_df[obs_df.index == a_date][var].values[0]
         current_wet_state = WET
-        if precip <= lower_bound:
+        if precip <= lower_bound_obs:
             current_wet_state = DRY
-        if precip > upper_bound:
+        if precip > upper_bound_obs:
             current_wet_state = VERY_WET
 
         # TODO: not sure we need to track all this, but for diagnostic purposes
@@ -219,19 +191,32 @@ def bootstrap_pairs_of_dates(
             'wet_state': current_wet_state,
         }
 
+        window_start = sim_date - date_offset
+        window_end = sim_date + date_offset
+        array = gcm_dataset.sel(time=slice(window_start, window_end)).pr.values
+        # TODO: Is it okay for the window to overlap the historical period?
+        # This occurs in the first NEAR_WINDOW/2 days of the prediction
+        # period.
+
+        jp_matrix = tri_state_joint_probability(
+            array, lower_bound_gcm, upper_bound_gcm)
+        gcm_ref_jp_matrix = historic_gcm_jp_matrix_lookup[sim_date.month][sim_date.day]
+        # jp_delta_matrix_lookup[base_date.year][base_date.dayofyear] = jp_matrix - gcm_ref_jp_matrix
+        delta_jp_doy_yr = jp_matrix - gcm_ref_jp_matrix
+
         observed_jp_doy = historic_obs_jp_matrix_lookup[sim_date.month][sim_date.day]
-        delta_jp_doy_yr = gcm_jp_delta_matrix_dict[sim_date.year][sim_date.dayofyear]
+        # delta_jp_doy_yr = gcm_jp_delta_matrix_dict[sim_date.year][sim_date.dayofyear]
         margins_matrix = marginal_probability_of_transitions(
             observed_jp_doy, delta_jp_doy_yr)
         next_wet_state = numpy.random.choice(
             [DRY, WET, VERY_WET], p=margins_matrix[current_wet_state])
         sim_dict['next_wet_state'] = next_wet_state
 
-        # transitions_array is always one day shorter than historical record
+        # transitions_array_obs is always one day shorter than historical record
         # so trim the last day off the historical record before indexing.
         window_idx = slice_dates_around_dayofyear(
             obs_df.index[:-1], sim_date.month, sim_date.day, NEAR_WINDOW)
-        matching_idx = transitions_array[window_idx] == \
+        matching_idx = transitions_array_obs[window_idx] == \
             TRANSITION_TYPES[current_wet_state][next_wet_state]
 
         # TODO: implement the "nearest" metric rather than taking a random choice:
@@ -323,16 +308,11 @@ if __name__ == "__main__":
                 f'({gcm_start_date} : {gcm_end_date})')
 
         mfds = shift_longitude_from_360(mfds)
-        gcm_jp_delta_matrix_dict = compute_delta_jp_matrices(
-            mfds.sel(lon=lon, lat=lat, method='nearest'),
+
+        bootstrap_pairs_of_dates(
+            observed_precip_path,
+            precip_var,
+            simulation_dates_index,
             REF_PERIOD_START_DATE,
             REF_PERIOD_END_DATE,
-            simulation_dates_index)
-
-    bootstrap_pairs_of_dates(
-        observed_precip_path,
-        precip_var,
-        simulation_dates_index,
-        REF_PERIOD_START_DATE,
-        REF_PERIOD_END_DATE,
-        gcm_jp_delta_matrix_dict)
+            mfds.sel(lon=lon, lat=lat, method='nearest'))
