@@ -76,60 +76,6 @@ class TestKNN(unittest.TestCase):
             ref_dates, transitions, month, day, near_window)
         numpy.testing.assert_array_almost_equal(jp_matrix, expected_matrix)
 
-    # TODO: this function is no longer expected to raise an error
-    # write & test a new function that validates the dates?
-    # def test_compute_delta_jp_matrices_prediction_dates(self):
-    #     """Test compute_delta_jp_matrices raises ValueError."""
-    #     from .. import knn
-
-    #     lons = [0.0]
-    #     lats = [20.0]
-    #     gcm_start_date = '1980-01-01'
-    #     gcm_end_date = '1990-12-31'
-    #     times = xarray.date_range(
-    #         gcm_start_date, gcm_end_date, use_cftime=True)
-
-    #     lower_bound = 3
-    #     upper_bound = 7
-    #     data = numpy.reshape(
-    #         numpy.random.uniform(
-    #             low=0, high=10, size=len(times)*len(lons)*len(lats)),
-    #         (len(lons), len(lats), len(times)))
-
-    #     ds = xarray.Dataset(
-    #         {
-    #             'pr': (['lon', 'lat', 'time'], data)
-    #         },
-    #         coords={
-    #             'lon': lons,
-    #             'lat': lats,
-    #             'time': times
-    #         }
-    #     )
-
-    #     reference_start_date = gcm_start_date
-    #     reference_end_date = '1985-01-01'
-    #     prediction_start_date = '1986-01-01'
-    #     prediction_end_date = '1995-01-01'  # after gcm_end_date
-    #     simulation_date_series = xarray.date_range(
-    #         prediction_start_date,
-    #         prediction_end_date, calendar="noleap")
-    #     with self.assertRaises(ValueError) as cm:
-    #         knn.compute_delta_jp_matrices(
-    #             ds.isel(lon=0, lat=0), reference_start_date, reference_end_date,
-    #             simulation_date_series, lower_bound, upper_bound)
-    #     self.assertTrue(
-    #         'is outside the time-range of the gcm' in str(cm.exception))
-
-    #     prediction_start_date = '1970-01-01'  # before gcm_start_date
-    #     prediction_end_date = '1990-01-01'
-    #     with self.assertRaises(ValueError) as cm:
-    #         knn.compute_delta_jp_matrices(
-    #             ds.isel(lon=0, lat=0), reference_start_date, reference_end_date,
-    #             simulation_date_series, lower_bound, upper_bound)
-    #     self.assertTrue(
-    #         'is outside the time-range of the gcm' in str(cm.exception))
-
 
 class TestJointProbability(unittest.TestCase):
     """Tests joint_probability.py."""
