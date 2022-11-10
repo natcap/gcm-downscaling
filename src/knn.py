@@ -6,7 +6,6 @@ import os
 import numpy
 from numpy.lib.stride_tricks import sliding_window_view
 import pandas
-import pygeoprocessing
 import xarray
 
 LOGGER = logging.getLogger(__name__)
@@ -136,7 +135,7 @@ def compute_historical_jp_matrices(
     return jp_matrix_dict
 
 
-def bootstrap_pairs_of_dates(
+def downscale_precipitation(
         observed_data_path, var, simulation_dates_index, reference_start_date,
         reference_end_date, gcm_dataset):
     dates_lookup = {}
@@ -254,12 +253,6 @@ def shift_longitude_from_360(dataset):
                      'No dimension "lon" in ')
 
 
-def slice_from_bbox(dataset, minx, miny, maxx, maxy):
-    return dataset.isel(
-        lon=(dataset.lon > minx) & (dataset.lon < maxx),
-        lat=(dataset.lat > miny) & (dataset.lat < maxy))
-
-
 def date_range_no_leap(start, stop):
     # "noleap" always creates 365-day years. It also forces cftime-format
     # dates, which is not so convenient. isoformat is more interoperable,
@@ -309,7 +302,7 @@ if __name__ == "__main__":
 
         mfds = shift_longitude_from_360(mfds)
 
-        bootstrap_pairs_of_dates(
+        downscale_precipitation(
             observed_precip_path,
             precip_var,
             simulation_dates_index,
