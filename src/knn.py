@@ -290,14 +290,14 @@ def downscale_precipitation(
             [DRY, WET, VERY_WET], p=margins_matrix[current_wet_state])
         sim_dict['next_wet_state'] = next_wet_state
 
-        matching_idx = numpy.array([False])
+        valid_mask = numpy.array([False])
         search_window = NEAR_WINDOW
-        while not matching_idx.any():
+        while not valid_mask.any():
             # transitions array is one day shorter than historical record
             # so trim the last day off the historical record before indexing.
             window_idx = slice_dates_around_dayofyear(
                 obs_df.index[:-1], sim_date.month, sim_date.day, search_window)
-            matching_idx = transitions_array_obs[window_idx] == \
+            valid_mask = transitions_array_obs[window_idx] == \
                 TRANSITION_TYPES[current_wet_state][next_wet_state]
             search_window += 1
         if search_window > NEAR_WINDOW + 1:
@@ -306,13 +306,17 @@ def downscale_precipitation(
                 f'transition matching {current_wet_state}->{next_wet_state} '
                 f'for simulation date {sim_date}')
 
-        # TODO: implement the "nearest" metric rather than taking a random choice:
-        # TODO: matching_idx is intermittently empty?
-        chosen_idx = numpy.random.choice(window_idx[matching_idx])
-        # the index is from the transitions_array, which aligns to the start of
-        # the observational record. We're really interested in the 2nd day of
-        # the transition, not the first. So + 1:
-        a_date = obs_df.index[chosen_idx + 1]
+        # Which leading-day from the matching transitions is most similar to
+        # the current day's precip?
+        neighbors = obs_df.iloc[window_idx[valid_mask], ]
+        distances = numpy.abs(neighbors[var].values - precip)
+        nearest = distances.argmin()  # TODO: what if there's a tie?
+        # we want the day after the nearest-neighbor date, but it's not safe
+        # to just add 1 day, we might hit Feb 29th, which might not exist in
+        # observed record. So find the index of the NN date from the observed
+        # record, and get the subsequent record's date.
+        chosen_idx = obs_df.index.get_loc(neighbors.index[nearest]) + 1
+        a_date = obs_df.index[chosen_idx]
         sim_dict['next_historic_date'] = a_date
 
         dates_lookup[sim_date] = sim_dict
