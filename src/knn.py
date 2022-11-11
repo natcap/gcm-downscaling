@@ -28,6 +28,48 @@ PREDICTION_PERIOD_END_DATE = '2016-01-31'
 DATA_STORE_PATH = 'H://Shared drives/GCM_Climate_Tool/required_files'
 
 
+def shift_longitude_from_360(dataset):
+    """Reassign longitude coordinates from 0:360 scale to -180:180.
+
+    Args:
+        dataset (xarray.Dataset): an in-memory representation of a netCDF
+            with a `coord` named `lon`.
+
+    Raises:
+        ValueError if the dataset does not include a `lon` coordinate.
+
+    Returns:
+        xarray.Dataset
+    """
+    if 'lon' in dataset.dims:
+        return dataset.assign_coords(lon=(((dataset.lon + 180) % 360) - 180))
+    raise ValueError('Could not reassign longitude coordinates,'
+                     'No dimension "lon" in ')
+
+
+def date_range_no_leap(start, stop):
+    """Create a series of dates from start to stop, skipping leap-days.
+
+    calendar='noleap' always creates 365-day years. It also forces
+    cftime-format dates, which is not so convenient. isoformat is more
+    interoperable, and pandas DatetimeIndex is most convenient for indexing.
+
+    If start & stop include a leap year, xarray will still skip
+    the leap-day, but pandas DatetimeIndex will number the date.dayofyear
+    from 0 - 366, for the leap year, skipping over day 60.
+
+    Args:
+        start (string): of format 'YYYY-MM-DD'
+        stop (string): of format 'YYYY-MM-DD'
+
+    Returns:
+        (pandas.DatetimeIndex) series of dates from start to stop.
+    """
+    return pandas.DatetimeIndex(
+        [d.isoformat() for d in
+            xarray.date_range(start, stop, calendar='noleap')])
+
+
 def tri_state_joint_probability(timeseries, lower_bound, upper_bound):
     """Calculate probabilities of state transitions for consecutive
        values in timeseries.
@@ -92,10 +134,25 @@ def state_transition_table(array, lower_bound, upper_bound):
 
 
 def slice_dates_around_dayofyear(dates_index, month, day, near_window):
-    # Sometimes the dates_index comes from a historical record, which
-    # could have a 366-day year. So rather than getting a window
-    # around a day-of-year (e.g. day 65), we always get a window
-    # around a month-day date (e.g. March 3).
+    """Get index of dates from within an n-day window of a given day-of-year.
+
+    For example, get the index of all dates from all years included in
+    `dates_index`, within `near_window` days of July 1st.
+
+    Sometimes the `dates_index` comes from a historical record, which
+    could have a 366-day year. So rather than getting a window
+    around a day-of-year (e.g. day 65), we always get a window
+    around a month-day date (e.g. March 3).
+
+    Args:
+        dates_index (pandas.DatetimeIndex): daily frequency
+        month (integer): from 1 - 12
+        day (integer): day of the month
+        near_window (integer): number of days before & after month-day
+
+    Returns:
+        (numpy.array): a 1-d array of indexes of size `dates_index`
+    """
     idx = numpy.nonzero(
         (dates_index.month == month)
         & (dates_index.day == day))[0]
@@ -105,9 +162,31 @@ def slice_dates_around_dayofyear(dates_index, month, day, near_window):
     return numpy.array([i for r in ranges for i in r])
 
 
+def marginal_probability_of_transitions(observed_matrix, delta_matrix):
+    """Add joint-probability matrices; calculate marginal probability matrix.
+
+    Args:
+        observed_matrix (numpy.array): 2-d array of shape (3,3)
+        delta_matrix (numpy.array): 2-d array of shape (3,3)
+
+    Returns:
+        (numpy.array): 2-d array of shape (3,3)
+    """
+    projected_jp_matrix = observed_matrix + delta_matrix
+    projected_jp_matrix[projected_jp_matrix < 0] = 0
+
+    def func(x):
+        if x.sum() > 0:
+            return x / x.sum()
+        return x
+
+    return numpy.apply_along_axis(func, 1, projected_jp_matrix)
+
+
 def jp_matrix_from_transitions_sequence(
         dates_index, transitions_array, month, day, near_window):
-    flat_idx = slice_dates_around_dayofyear(dates_index, month, day, near_window)
+    flat_idx = slice_dates_around_dayofyear(
+        dates_index, month, day, near_window)
     frequencies = [numpy.count_nonzero(transitions_array[flat_idx] == x)
                    for x in TRANSITION_TYPES.flatten()]
     proportions = numpy.array(frequencies) / len(flat_idx)
@@ -231,39 +310,6 @@ def downscale_precipitation(
 
     dataframe = pandas.DataFrame.from_dict(dates_lookup, orient='index')
     dataframe.to_csv('bootstrapped_dates.csv')
-
-
-def marginal_probability_of_transitions(observed_matrix, delta_matrix):
-    # TODO: is this already implemented in scipy.stats.contingency.margins?
-    projected_jp_matrix = observed_matrix + delta_matrix
-    projected_jp_matrix[projected_jp_matrix < 0] = 0
-
-    def func(x):
-        if x.sum() > 0:
-            return x / x.sum()
-        return x
-
-    return numpy.apply_along_axis(func, 1, projected_jp_matrix)
-
-
-def shift_longitude_from_360(dataset):
-    if 'lon' in dataset.dims:
-        return dataset.assign_coords(lon=(((dataset.lon + 180) % 360) - 180))
-    raise ValueError('Could not reassign longitude coordinates,'
-                     'No dimension "lon" in ')
-
-
-def date_range_no_leap(start, stop):
-    # "noleap" always creates 365-day years. It also forces cftime-format
-    # dates, which is not so convenient. isoformat is more interoperable,
-    # and pandas DatetimeIndex is most convenient for indexing.
-    # 
-    # If start & stop include a leap year, xarray will still skip
-    # the leap-day, but pandas DatetimeIndex will number the date.dayofyear
-    # from 0 - 366, for the leap year, skipping over day 60.
-    return pandas.DatetimeIndex(
-        [d.isoformat() for d in
-            xarray.date_range(start, stop, calendar='noleap')])
 
 
 if __name__ == "__main__":
