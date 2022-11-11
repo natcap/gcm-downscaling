@@ -2,6 +2,7 @@ from collections import defaultdict
 import datetime
 import logging
 import os
+import sys
 
 import numpy
 from numpy.lib.stride_tricks import sliding_window_view
@@ -9,6 +10,8 @@ import pandas
 import xarray
 
 LOGGER = logging.getLogger(__name__)
+handler = logging.StreamHandler(sys.stdout)
+logging.basicConfig(level=logging.INFO, handlers=[handler])
 
 PERCENTILE_THRESHOLDS = (25, 75)
 DRY = 0  # joint-probability matrices are (3, 3) and index at 0.
@@ -108,7 +111,7 @@ def tri_state_joint_probability(timeseries, lower_bound, upper_bound):
     return (jp_matrix / numpy.sum(jp_matrix))
 
 
-def state_transition_table(array, lower_bound, upper_bound):
+def state_transition_series(array, lower_bound, upper_bound):
     def func(a):
         if a[0] <= lower_bound:
             if a[1] <= lower_bound:
@@ -226,11 +229,9 @@ def downscale_precipitation(
     obs_df.set_index('date', inplace=True)
     obs_df = obs_df[reference_start_date: reference_end_date]
 
-    # transitions array will have same length as observed precip values, minus 1
-    # for the last day.
     lower_bound_obs, upper_bound_obs = numpy.percentile(
         obs_df[var].values, q=PERCENTILE_THRESHOLDS)
-    transitions_array_obs = state_transition_table(
+    transitions_array_obs = state_transition_series(
         obs_df[var].values, lower_bound_obs, upper_bound_obs)
     historic_obs_jp_matrix_lookup = compute_historical_jp_matrices(
         transitions_array_obs, obs_df.index)
@@ -239,7 +240,7 @@ def downscale_precipitation(
         time=slice(reference_start_date, reference_end_date))
     lower_bound_gcm, upper_bound_gcm = numpy.percentile(
         gcm_reference_period_ds.pr.values, q=PERCENTILE_THRESHOLDS)
-    transitions_array_gcm = state_transition_table(
+    transitions_array_gcm = state_transition_series(
         gcm_reference_period_ds.pr.values, lower_bound_gcm, upper_bound_gcm)
     reference_period_date_index = pandas.DatetimeIndex(
         gcm_reference_period_ds.time.values)
@@ -269,33 +270,41 @@ def downscale_precipitation(
             'wet_state': current_wet_state,
         }
 
+        date_offset = pandas.DateOffset(days=NEAR_WINDOW)
         window_start = sim_date - date_offset
         window_end = sim_date + date_offset
         array = gcm_dataset.sel(time=slice(window_start, window_end)).pr.values
         # TODO: Is it okay for the window to overlap the historical period?
-        # This occurs in the first NEAR_WINDOW/2 days of the prediction
+        # This occurs in the first NEAR_WINDOW days of the prediction
         # period.
 
         jp_matrix = tri_state_joint_probability(
             array, lower_bound_gcm, upper_bound_gcm)
         gcm_ref_jp_matrix = historic_gcm_jp_matrix_lookup[sim_date.month][sim_date.day]
-        # jp_delta_matrix_lookup[base_date.year][base_date.dayofyear] = jp_matrix - gcm_ref_jp_matrix
         delta_jp_doy_yr = jp_matrix - gcm_ref_jp_matrix
 
         observed_jp_doy = historic_obs_jp_matrix_lookup[sim_date.month][sim_date.day]
-        # delta_jp_doy_yr = gcm_jp_delta_matrix_dict[sim_date.year][sim_date.dayofyear]
         margins_matrix = marginal_probability_of_transitions(
             observed_jp_doy, delta_jp_doy_yr)
         next_wet_state = numpy.random.choice(
             [DRY, WET, VERY_WET], p=margins_matrix[current_wet_state])
         sim_dict['next_wet_state'] = next_wet_state
 
-        # transitions_array_obs is always one day shorter than historical record
-        # so trim the last day off the historical record before indexing.
-        window_idx = slice_dates_around_dayofyear(
-            obs_df.index[:-1], sim_date.month, sim_date.day, NEAR_WINDOW)
-        matching_idx = transitions_array_obs[window_idx] == \
-            TRANSITION_TYPES[current_wet_state][next_wet_state]
+        matching_idx = numpy.array([False])
+        search_window = NEAR_WINDOW
+        while not matching_idx.any():
+            # transitions array is one day shorter than historical record
+            # so trim the last day off the historical record before indexing.
+            window_idx = slice_dates_around_dayofyear(
+                obs_df.index[:-1], sim_date.month, sim_date.day, search_window)
+            matching_idx = transitions_array_obs[window_idx] == \
+                TRANSITION_TYPES[current_wet_state][next_wet_state]
+            search_window += 1
+        if search_window > NEAR_WINDOW + 1:
+            LOGGER.info(
+                f'Needed a window of {search_window - 1} days to find a '
+                f'transition matching {current_wet_state}->{next_wet_state} '
+                f'for simulation date {sim_date}')
 
         # TODO: implement the "nearest" metric rather than taking a random choice:
         # TODO: matching_idx is intermittently empty?
@@ -332,6 +341,9 @@ if __name__ == "__main__":
     simulation_dates_index = date_range_no_leap(
         PREDICTION_PERIOD_START_DATE,
         PREDICTION_PERIOD_END_DATE)
+    LOGGER.info(
+        f'Simulating for period {PREDICTION_PERIOD_START_DATE} : '
+        f'{PREDICTION_PERIOD_END_DATE}')
 
     with xarray.open_mfdataset(
             [historical_gcm_path, future_gcm_path]) as mfds:

@@ -50,8 +50,8 @@ class TestKNN(unittest.TestCase):
             numpy.count_nonzero(dates_index[idx].month == month),
             len(idx))
 
-    def test_state_transition_sequence(self):
-        """Test create sequence of state transitions."""
+    def test_state_transition_series(self):
+        """Test create series of state transitions."""
         from .. import knn
 
         array = numpy.array([0, 0, 0, 5, 2, 1, 0, 0, 9, 8, 0])
@@ -60,7 +60,7 @@ class TestKNN(unittest.TestCase):
             'AA', 'AA', 'AC', 'CC', 'CA']
         lower_bound = 3
         upper_bound = 7
-        transitions = knn.state_transition_table(
+        transitions = knn.state_transition_series(
             array, lower_bound, upper_bound)
         numpy.testing.assert_array_equal(transitions, expected_array)
 
