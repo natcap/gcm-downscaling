@@ -109,21 +109,21 @@ def state_transition_series(array, lower_bound, upper_bound):
     def func(a):
         if a[0] <= lower_bound:
             if a[1] <= lower_bound:
-                return 'AA'
+                return TRANSITION_TYPES[0, 0]
             elif a[1] > upper_bound:
-                return 'AC'
-            return 'AB'
+                return TRANSITION_TYPES[0, 2]
+            return TRANSITION_TYPES[0, 1]
         elif a[0] > upper_bound:
             if a[1] <= lower_bound:
-                return 'CA'
+                return TRANSITION_TYPES[2, 0]
             elif a[1] > upper_bound:
-                return 'CC'
-            return 'CB'
+                return TRANSITION_TYPES[2, 2]
+            return TRANSITION_TYPES[2, 1]
         if a[1] <= lower_bound:
-            return 'BA'
+            return TRANSITION_TYPES[1, 0]
         elif a[1] > upper_bound:
-            return 'BC'
-        return 'BB'
+            return TRANSITION_TYPES[1, 2]
+        return TRANSITION_TYPES[1, 1]
 
     pairs = sliding_window_view(array, window_shape=2)
     transitions = numpy.apply_along_axis(func, 1, pairs)
