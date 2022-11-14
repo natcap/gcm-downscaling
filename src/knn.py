@@ -26,8 +26,8 @@ DAYS_IN_YEAR = 365
 NEAR_WINDOW = 15  # days
 REF_PERIOD_START_DATE = '1985-01-01'
 REF_PERIOD_END_DATE = '2014-12-31'
-PREDICTION_PERIOD_START_DATE = '2015-01-01'
-PREDICTION_PERIOD_END_DATE = '2016-01-31'
+PREDICTION_PERIOD_START_DATE = '2023-01-01'
+PREDICTION_PERIOD_END_DATE = '2025-01-01'
 DATA_STORE_PATH = 'H://Shared drives/GCM_Climate_Tool/required_files'
 
 
@@ -44,10 +44,10 @@ def shift_longitude_from_360(dataset):
     Returns:
         xarray.Dataset
     """
-    if 'lon' in dataset.dims:
+    if 'lon' in dataset.coords:
         return dataset.assign_coords(lon=(((dataset.lon + 180) % 360) - 180))
-    raise ValueError('Could not reassign longitude coordinates,'
-                     'No dimension "lon" in ')
+    raise ValueError(f'Could not reassign longitude coordinates,'
+                     f'Expected dimension "lon" but found coordinates {dataset.coords}')
 
 
 def date_range_no_leap(start, stop):

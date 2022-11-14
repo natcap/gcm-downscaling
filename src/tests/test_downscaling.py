@@ -13,6 +13,49 @@ class TestKNN(unittest.TestCase):
     def tearDown(self):
         pass
 
+    def test_shift_longitude_error_on_missing_dimension(self):
+        """Test shift longitude from 0-360."""
+        from .. import knn
+
+        precip = 10 * numpy.random.rand(2, 2)
+        lon = [[-99.83, -99.32], [-99.79, -99.23]]
+        lat = [[42.25, 42.21], [42.63, 42.59]]
+        dataset = xarray.Dataset(
+            {
+                'pr': (['x', 'y'], precip),
+            },
+            coords={
+                'long': (['x', 'y'], lon),  # deliberately mislabeled coord.
+                'lat': (['x', 'y'], lat),
+            }
+        )
+
+        with self.assertRaises(ValueError) as cm:
+            _ = knn.shift_longitude_from_360(dataset)
+        self.assertTrue(
+            'Expected dimension "lon" but found coordinates' in str(cm.exception))
+
+    def test_shift_longitude_correct_given_180(self):
+        """Test shift longitude is correct given coords from -180-180."""
+        from .. import knn
+
+        precip = 10 * numpy.random.rand(2, 2)
+        lon = [[-180.0, -5.0], [0.0, 179.9]]
+        lat = [[42.25, 42.21], [42.63, 42.59]]
+        dataset = xarray.Dataset(
+            {
+                'pr': (['x', 'y'], precip),
+            },
+            coords={
+                'lon': (['x', 'y'], lon),
+                'lat': (['x', 'y'], lat),
+            }
+        )
+
+        shifted_dataset = knn.shift_longitude_from_360(dataset)
+        numpy.testing.assert_array_almost_equal(
+            shifted_dataset.lon.to_numpy(), lon)
+
     def test_tri_state_joint_probability(self):
         """Test tri_state_joint_probability.py."""
         from .. import knn
