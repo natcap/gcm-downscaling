@@ -13,7 +13,6 @@ LOGGER = logging.getLogger(__name__)
 handler = logging.StreamHandler(sys.stdout)
 logging.basicConfig(level=logging.INFO, handlers=[handler])
 
-PERCENTILE_THRESHOLDS = (25, 75)
 DRY = 0  # joint-probability matrices are (3, 3) and index at 0.
 WET = 1
 VERY_WET = 2
@@ -24,11 +23,6 @@ TRANSITION_TYPES = numpy.array([
 ], dtype="U2")
 DAYS_IN_YEAR = 365
 NEAR_WINDOW = 15  # days
-REF_PERIOD_START_DATE = '1985-01-01'
-REF_PERIOD_END_DATE = '2014-12-31'
-PREDICTION_PERIOD_START_DATE = '2023-01-01'
-PREDICTION_PERIOD_END_DATE = '2025-01-01'
-DATA_STORE_PATH = 'H://Shared drives/GCM_Climate_Tool/required_files'
 
 
 def shift_longitude_from_360(dataset):
@@ -219,7 +213,8 @@ def compute_historical_jp_matrices(
 
 def downscale_precipitation(
         observed_data_path, var, simulation_dates_index, reference_start_date,
-        reference_end_date, gcm_dataset):
+        reference_end_date, gcm_dataset, precip_percentile_thresholds,
+        target_csv_path):
     dates_lookup = {}
 
     obs_df = pandas.read_csv(
@@ -230,7 +225,7 @@ def downscale_precipitation(
     obs_df = obs_df[reference_start_date: reference_end_date]
 
     lower_bound_obs, upper_bound_obs = numpy.percentile(
-        obs_df[var].values, q=PERCENTILE_THRESHOLDS)
+        obs_df[var].values, q=precip_percentile_thresholds)
     transitions_array_obs = state_transition_series(
         obs_df[var].values, lower_bound_obs, upper_bound_obs)
     historic_obs_jp_matrix_lookup = compute_historical_jp_matrices(
@@ -239,7 +234,7 @@ def downscale_precipitation(
     gcm_reference_period_ds = gcm_dataset.sel(
         time=slice(reference_start_date, reference_end_date))
     lower_bound_gcm, upper_bound_gcm = numpy.percentile(
-        gcm_reference_period_ds.pr.values, q=PERCENTILE_THRESHOLDS)
+        gcm_reference_period_ds.pr.values, q=precip_percentile_thresholds)
     transitions_array_gcm = state_transition_series(
         gcm_reference_period_ds.pr.values, lower_bound_gcm, upper_bound_gcm)
     reference_period_date_index = pandas.DatetimeIndex(
@@ -322,32 +317,40 @@ def downscale_precipitation(
         dates_lookup[sim_date] = sim_dict
 
     dataframe = pandas.DataFrame.from_dict(dates_lookup, orient='index')
-    dataframe.to_csv('bootstrapped_dates.csv')
+    dataframe.to_csv(target_csv_path)
 
 
 if __name__ == "__main__":
+    ref_period_start_date = '1985-01-01'
+    ref_period_end_date = '2014-12-31'
+    prediction_period_start_date = '2023-01-01'
+    prediction_period_end_date = '2025-01-01'
+    data_store_path = 'H://Shared drives/GCM_Climate_Tool/required_files'
     precip_var = 'pr_Beni01'
     site_name = 'Beni01'
+    precip_percentile_thresholds = (25, 75)
+    target_csv_path = 'downscaled_precip.csv'
+
     observed_precip_path = os.path.join(
-        DATA_STORE_PATH, 'OBSERVATIONS/LLdM_AOI2/series_pr_diario.csv')
+        data_store_path, 'OBSERVATIONS/LLdM_AOI2/series_pr_diario.csv')
     observed_location = os.path.join(
-        DATA_STORE_PATH, 'OBSERVATIONS/LLdM_AOI2/catalogo.csv')
+        data_store_path, 'OBSERVATIONS/LLdM_AOI2/catalogo.csv')
     historical_gcm_path = os.path.join(
-        DATA_STORE_PATH, 'GCMs',
+        data_store_path, 'GCMs',
         'Amazon__pr_day_CanESM5_historical_r1i1p1f1_gn_18500101-20141231.nc')
     future_gcm_path = os.path.join(
-        DATA_STORE_PATH, 'GCMs',
+        data_store_path, 'GCMs',
         'Amazon__pr_day_CanESM5_ssp126_r1i1p1f1_gn_20150101-21001231.nc')
 
     locations = pandas.read_csv(observed_location)
     lon, lat = locations[locations['CODIGO_CAT'] == site_name][['longitud', 'latitud']].values[0]
 
     simulation_dates_index = date_range_no_leap(
-        PREDICTION_PERIOD_START_DATE,
-        PREDICTION_PERIOD_END_DATE)
+        prediction_period_start_date,
+        prediction_period_end_date)
     LOGGER.info(
-        f'Simulating for period {PREDICTION_PERIOD_START_DATE} : '
-        f'{PREDICTION_PERIOD_END_DATE}')
+        f'Simulating for period {prediction_period_start_date} : '
+        f'{prediction_period_end_date}')
 
     with xarray.open_mfdataset(
             [historical_gcm_path, future_gcm_path]) as mfds:
@@ -355,11 +358,11 @@ if __name__ == "__main__":
         gcm_start_date = mfds.time.values.min()
         gcm_end_date = mfds.time.values.max()
         date_offset = datetime.timedelta(days=NEAR_WINDOW)
-        if ((pandas.Timestamp(PREDICTION_PERIOD_END_DATE) + date_offset) > gcm_end_date or
-                (pandas.Timestamp(PREDICTION_PERIOD_START_DATE) - date_offset) < gcm_start_date):
+        if ((pandas.Timestamp(prediction_period_end_date) + date_offset) > gcm_end_date or
+                (pandas.Timestamp(prediction_period_start_date) - date_offset) < gcm_start_date):
             raise ValueError(
-                f'the requested prediction period {PREDICTION_PERIOD_START_DATE} : '
-                f'{PREDICTION_PERIOD_END_DATE} is outside the time-range of the gcm'
+                f'the requested prediction period {prediction_period_start_date} : '
+                f'{prediction_period_end_date} is outside the time-range of the gcm'
                 f'({gcm_start_date} : {gcm_end_date})')
 
         mfds = shift_longitude_from_360(mfds)
@@ -368,6 +371,8 @@ if __name__ == "__main__":
             observed_precip_path,
             precip_var,
             simulation_dates_index,
-            REF_PERIOD_START_DATE,
-            REF_PERIOD_END_DATE,
-            mfds.sel(lon=lon, lat=lat, method='nearest'))
+            ref_period_start_date,
+            ref_period_end_date,
+            mfds.sel(lon=lon, lat=lat, method='nearest'),
+            precip_percentile_thresholds,
+            target_csv_path)
