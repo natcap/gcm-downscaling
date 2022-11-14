@@ -1,5 +1,6 @@
 from collections import defaultdict
 import datetime
+import glob
 import logging
 import os
 import sys
@@ -23,6 +24,7 @@ TRANSITION_TYPES = numpy.array([
 ], dtype="U2")
 DAYS_IN_YEAR = 365
 NEAR_WINDOW = 15  # days
+EPSILON = 0.1
 
 
 def shift_longitude_from_360(dataset):
@@ -192,9 +194,6 @@ def jp_matrix_from_transitions_sequence(
 
 def compute_historical_jp_matrices(
         transitions_array, reference_period_date_index):
-    LOGGER.info(
-        f'computing JP matrices for historical reference period '
-        f'{reference_period_date_index.min()} : {reference_period_date_index.max()}')
     # Need a calendar for an arbitrary year
     # to collect all Jan 1sts, Jan 2nds, etc in the reference period
     caldates = date_range_no_leap('1980-01-01', '1980-12-31')
@@ -224,6 +223,9 @@ def downscale_precipitation(
     obs_df.set_index('date', inplace=True)
     obs_df = obs_df[reference_start_date: reference_end_date]
 
+    LOGGER.info(
+        f'computing observed JP matrices for reference period '
+        f'{reference_start_date} : {reference_end_date}')
     lower_bound_obs, upper_bound_obs = numpy.percentile(
         obs_df[var].values, q=precip_percentile_thresholds)
     transitions_array_obs = state_transition_series(
@@ -231,6 +233,9 @@ def downscale_precipitation(
     historic_obs_jp_matrix_lookup = compute_historical_jp_matrices(
         transitions_array_obs, obs_df.index)
 
+    LOGGER.info(
+        f'computing GCM JP matrices for reference period '
+        f'{reference_start_date} : {reference_end_date}')
     gcm_reference_period_ds = gcm_dataset.sel(
         time=slice(reference_start_date, reference_end_date))
     lower_bound_gcm, upper_bound_gcm = numpy.percentile(
@@ -246,6 +251,9 @@ def downscale_precipitation(
     window_idx = slice_dates_around_dayofyear(
             obs_df.index, day_one.month, day_one.day, NEAR_WINDOW)
 
+    LOGGER.info(
+        f'Simulating precip for period {simulation_dates_index.min()} : '
+        f'{simulation_dates_index.max()}')
     a_date = pandas.Timestamp(obs_df.index[numpy.random.choice(window_idx)])
     for sim_date in simulation_dates_index:
         # TODO: don't need to re-determine this here, we know the wetstate
@@ -304,13 +312,15 @@ def downscale_precipitation(
         # Which leading-day from the matching transitions is most similar to
         # the current day's precip?
         neighbors = obs_df.iloc[window_idx[valid_mask], ]
-        distances = numpy.abs(neighbors[var].values - precip)
-        nearest = distances.argmin()  # TODO: what if there's a tie?
+        inverse_distances = 1 / (
+            numpy.abs(neighbors[var].values - precip) + EPSILON)
+        weights = inverse_distances / inverse_distances.sum()
+        nearest = numpy.random.choice(neighbors.index, p=weights)
         # we want the day after the nearest-neighbor date, but it's not safe
         # to just add 1 day, we might hit Feb 29th, which might not exist in
         # observed record. So find the index of the NN date from the observed
-        # record, and get the subsequent record's date.
-        chosen_idx = obs_df.index.get_loc(neighbors.index[nearest]) + 1
+        # record and get the subsequent record's date.
+        chosen_idx = obs_df.index.get_loc(nearest) + 1
         a_date = obs_df.index[chosen_idx]
         sim_dict['next_historic_date'] = a_date
 
@@ -318,6 +328,7 @@ def downscale_precipitation(
 
     dataframe = pandas.DataFrame.from_dict(dates_lookup, orient='index')
     dataframe.to_csv(target_csv_path)
+    LOGGER.info(f'Simulation complete. Created file: {target_csv_path}')
 
 
 if __name__ == "__main__":
@@ -327,6 +338,9 @@ if __name__ == "__main__":
     prediction_period_end_date = '2025-01-01'
     data_store_path = 'H://Shared drives/GCM_Climate_Tool/required_files'
     precip_var = 'pr_Beni01'
+    gcm_var = 'pr'
+    gcm_experiment = 'ssp126'
+    gcm_model = 'CESM2-WACCM'
     site_name = 'Beni01'
     precip_percentile_thresholds = (25, 75)
     target_csv_path = 'downscaled_precip.csv'
@@ -335,12 +349,16 @@ if __name__ == "__main__":
         data_store_path, 'OBSERVATIONS/LLdM_AOI2/series_pr_diario.csv')
     observed_location = os.path.join(
         data_store_path, 'OBSERVATIONS/LLdM_AOI2/catalogo.csv')
-    historical_gcm_path = os.path.join(
-        data_store_path, 'GCMs',
-        'Amazon__pr_day_CanESM5_historical_r1i1p1f1_gn_18500101-20141231.nc')
-    future_gcm_path = os.path.join(
-        data_store_path, 'GCMs',
-        'Amazon__pr_day_CanESM5_ssp126_r1i1p1f1_gn_20150101-21001231.nc')
+    historical_gcm_files = glob.glob(
+        os.path.join(data_store_path, 'GCMs',
+                     f'Amazon__{gcm_var}_day_{gcm_model}_historical_*.nc'))
+    future_gcm_files = glob.glob(
+        os.path.join(data_store_path, 'GCMs',
+                     f'Amazon__{gcm_var}_day_{gcm_model}_{gcm_experiment}_*.nc'))
+    if len(historical_gcm_files) > 1 | len(future_gcm_files) > 1:
+        raise ValueError(
+            f'ambiguous GCM files selected: {historical_gcm_files}, '
+            f'{future_gcm_files}')
 
     locations = pandas.read_csv(observed_location)
     lon, lat = locations[locations['CODIGO_CAT'] == site_name][['longitud', 'latitud']].values[0]
@@ -348,12 +366,9 @@ if __name__ == "__main__":
     simulation_dates_index = date_range_no_leap(
         prediction_period_start_date,
         prediction_period_end_date)
-    LOGGER.info(
-        f'Simulating for period {prediction_period_start_date} : '
-        f'{prediction_period_end_date}')
 
     with xarray.open_mfdataset(
-            [historical_gcm_path, future_gcm_path]) as mfds:
+            [historical_gcm_files[0], future_gcm_files[0]]) as mfds:
 
         gcm_start_date = mfds.time.values.min()
         gcm_end_date = mfds.time.values.max()
