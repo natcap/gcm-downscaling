@@ -5,9 +5,13 @@ import logging
 import os
 import sys
 
+from affine import Affine
+import geopandas
 import numpy
 from numpy.lib.stride_tricks import sliding_window_view
 import pandas
+import pygeoprocessing
+import rasterio
 import xarray
 
 LOGGER = logging.getLogger(__name__)
@@ -331,22 +335,31 @@ def downscale_precipitation(
     LOGGER.info(f'Simulation complete. Created file: {target_csv_path}')
 
 
+def rasterize(shapes, coords, transform, fill=0, **kwargs):
+    out_shape = (len(coords['lat']), len(coords['lon']))
+    raster = rasterio.features.rasterize(
+        shapes, out_shape=out_shape, fill=fill, transform=transform,
+        dtype=int, **kwargs)
+    return xarray.DataArray(raster, coords=coords, dims=('lat', 'lon'))
+
+
 if __name__ == "__main__":
     ref_period_start_date = '1985-01-01'
     ref_period_end_date = '2014-12-31'
     prediction_period_start_date = '2023-01-01'
     prediction_period_end_date = '2025-01-01'
     data_store_path = 'H://Shared drives/GCM_Climate_Tool/required_files'
-    precip_var = 'pr_Beni01'
+    precip_var = 'regional_pr'
     gcm_var = 'pr'
     gcm_experiment = 'ssp126'
     gcm_model = 'CESM2-WACCM'
-    site_name = 'Beni01'
-    precip_percentile_thresholds = (25, 75)
+    precip_percentile_thresholds = (25, 75)  # TODO: first threshold is 1mm
     target_csv_path = 'downscaled_precip.csv'
 
+    aoi_path = os.path.join(
+        data_store_path, 'OBSERVATIONS/LLdM_AOI2/SHP/Basin_LldM.shp')
     observed_precip_path = os.path.join(
-        data_store_path, 'OBSERVATIONS/LLdM_AOI2/series_pr_diario.csv')
+        data_store_path, 'OBSERVATIONS/LLdM_AOI2/series_pr_diario_regional_average.csv')
     observed_location = os.path.join(
         data_store_path, 'OBSERVATIONS/LLdM_AOI2/catalogo.csv')
     historical_gcm_files = glob.glob(
@@ -360,8 +373,8 @@ if __name__ == "__main__":
             f'ambiguous GCM files selected: {historical_gcm_files}, '
             f'{future_gcm_files}')
 
-    locations = pandas.read_csv(observed_location)
-    lon, lat = locations[locations['CODIGO_CAT'] == site_name][['longitud', 'latitud']].values[0]
+    # locations = pandas.read_csv(observed_location)
+    # lon, lat = locations[locations['CODIGO_CAT'] == site_name][['longitud', 'latitud']].values[0]
 
     simulation_dates_index = date_range_no_leap(
         prediction_period_start_date,
@@ -381,6 +394,31 @@ if __name__ == "__main__":
                 f'({gcm_start_date} : {gcm_end_date})')
 
         mfds = shift_longitude_from_360(mfds)
+        width = mfds.coords['lon'][1] - mfds.coords['lon'][0]
+        height = mfds.coords['lat'][1] - mfds.coords['lat'][0]
+        width = width.to_numpy()
+        height = height.to_numpy()
+        coords = {
+            'lon': numpy.sort(mfds.coords['lon']),   # W -> E
+            'lat': -numpy.sort(-mfds.coords['lat'])  # N -> S
+        }
+        bbox = pygeoprocessing.get_vector_info(aoi_path)['bounding_box']
+        # expand bbox by one gcm cell on each side, only really necessary
+        # if we rasterize with ALL_TOUCHED=TRUE
+        minx = bbox[0] - width
+        miny = bbox[1] - height
+        maxx = bbox[2] + width
+        maxy = bbox[3] + height
+        mfds = mfds.where(
+            (mfds.lon >= minx) & (mfds.lon <= maxx)
+            & (mfds.lat >= miny) & (mfds.lat <= maxy),
+            drop=True)
+
+        translation = Affine.translation(coords['lon'][0] - width / 2, coords['lat'][-1] - height / 2)
+        scale = Affine.scale(width, height)
+        transform = translation * scale
+        aoi_df = geopandas.read_file(aoi_path)
+        mfds['aoi'] = rasterize(aoi_df.geometry, coords, transform, fill=0)
 
         downscale_precipitation(
             observed_precip_path,
@@ -388,6 +426,6 @@ if __name__ == "__main__":
             simulation_dates_index,
             ref_period_start_date,
             ref_period_end_date,
-            mfds.sel(lon=lon, lat=lat, method='nearest'),
+            mfds.where(mfds.aoi == 1),
             precip_percentile_thresholds,
             target_csv_path)

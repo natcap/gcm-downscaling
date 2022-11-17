@@ -11,3 +11,4 @@ dependencies:
 - pygeoprocessing
 - pytest
 - xarray
+- rioxarray
