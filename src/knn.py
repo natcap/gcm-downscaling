@@ -4,6 +4,7 @@ import glob
 import logging
 import os
 import sys
+import tempfile
 
 from affine import Affine
 import geopandas
@@ -29,6 +30,42 @@ TRANSITION_TYPES = numpy.array([
 DAYS_IN_YEAR = 365
 NEAR_WINDOW = 15  # days
 EPSILON = 0.1
+KG_M2S_TO_MM = (60 * 60 * 24)  # Kg / (m^2 * s) to mm
+
+
+def rasterize(aoi_path, dataset, fill=0):
+    width = dataset.coords['lon'][1] - dataset.coords['lon'][0]
+    height = dataset.coords['lat'][1] - dataset.coords['lat'][0]
+    width = width.to_numpy()
+    height = height.to_numpy()
+    coords = {
+        'lon': numpy.sort(dataset.coords['lon']),   # W -> E
+        'lat': -numpy.sort(-dataset.coords['lat'])  # N -> S
+    }
+    bbox = pygeoprocessing.get_vector_info(aoi_path)['bounding_box']
+    # expand bbox by one gcm cell on each side, only really necessary
+    # if we rasterize with ALL_TOUCHED=TRUE
+    minx = bbox[0] - width
+    miny = bbox[1] - height
+    maxx = bbox[2] + width
+    maxy = bbox[3] + height
+    dataset = dataset.where(
+        (dataset.lon >= minx) & (dataset.lon <= maxx)
+        & (dataset.lat >= miny) & (dataset.lat <= maxy),
+        drop=True)
+
+    translation = Affine.translation(coords['lon'][0] - width / 2, coords['lat'][-1] - height / 2)
+    scale = Affine.scale(width, height)
+    transform = translation * scale
+    aoi_df = geopandas.read_file(aoi_path)
+    out_shape = (len(coords['lat']), len(coords['lon']))
+    raster = rasterio.features.rasterize(
+        aoi_df.geometry,
+        out_shape=out_shape,
+        fill=fill,
+        transform=transform,
+        dtype=int)
+    return xarray.DataArray(raster, coords=coords, dims=('lat', 'lon'))
 
 
 def shift_longitude_from_360(dataset):
@@ -216,8 +253,8 @@ def compute_historical_jp_matrices(
 
 def downscale_precipitation(
         observed_data_path, var, simulation_dates_index, reference_start_date,
-        reference_end_date, gcm_dataset, precip_percentile_thresholds,
-        target_csv_path):
+        reference_end_date, gcm_dataset, upper_precip_percentile,
+        lower_precip_threshold, target_csv_path):
     dates_lookup = {}
 
     obs_df = pandas.read_csv(
@@ -230,8 +267,9 @@ def downscale_precipitation(
     LOGGER.info(
         f'computing observed JP matrices for reference period '
         f'{reference_start_date} : {reference_end_date}')
-    lower_bound_obs, upper_bound_obs = numpy.percentile(
-        obs_df[var].values, q=precip_percentile_thresholds)
+    lower_bound_obs = lower_precip_threshold
+    upper_bound_obs = numpy.percentile(
+        obs_df[var].values, q=upper_precip_percentile)
     transitions_array_obs = state_transition_series(
         obs_df[var].values, lower_bound_obs, upper_bound_obs)
     historic_obs_jp_matrix_lookup = compute_historical_jp_matrices(
@@ -242,8 +280,9 @@ def downscale_precipitation(
         f'{reference_start_date} : {reference_end_date}')
     gcm_reference_period_ds = gcm_dataset.sel(
         time=slice(reference_start_date, reference_end_date))
-    lower_bound_gcm, upper_bound_gcm = numpy.percentile(
-        gcm_reference_period_ds.pr.values, q=precip_percentile_thresholds)
+    lower_bound_gcm = lower_precip_threshold / KG_M2S_TO_MM
+    upper_bound_gcm = numpy.percentile(
+        gcm_reference_period_ds.pr.values, q=upper_precip_percentile)
     transitions_array_gcm = state_transition_series(
         gcm_reference_period_ds.pr.values, lower_bound_gcm, upper_bound_gcm)
     reference_period_date_index = pandas.DatetimeIndex(
@@ -335,14 +374,6 @@ def downscale_precipitation(
     LOGGER.info(f'Simulation complete. Created file: {target_csv_path}')
 
 
-def rasterize(shapes, coords, transform, fill=0, **kwargs):
-    out_shape = (len(coords['lat']), len(coords['lon']))
-    raster = rasterio.features.rasterize(
-        shapes, out_shape=out_shape, fill=fill, transform=transform,
-        dtype=int, **kwargs)
-    return xarray.DataArray(raster, coords=coords, dims=('lat', 'lon'))
-
-
 if __name__ == "__main__":
     ref_period_start_date = '1985-01-01'
     ref_period_end_date = '2014-12-31'
@@ -352,16 +383,17 @@ if __name__ == "__main__":
     precip_var = 'regional_pr'
     gcm_var = 'pr'
     gcm_experiment = 'ssp126'
-    gcm_model = 'CESM2-WACCM'
-    precip_percentile_thresholds = (25, 75)  # TODO: first threshold is 1mm
+    gcm_model = 'CanESM5'
+    upper_precip_percentile = (75)
+    lower_precip_threshold = 1  # millimeter
     target_csv_path = 'downscaled_precip.csv'
+    temp_directory = tempfile.mkdtemp()
+    temp_netcdf_path = os.path.join(temp_directory, 'mean.nc')
 
     aoi_path = os.path.join(
         data_store_path, 'OBSERVATIONS/LLdM_AOI2/SHP/Basin_LldM.shp')
     observed_precip_path = os.path.join(
         data_store_path, 'OBSERVATIONS/LLdM_AOI2/series_pr_diario_regional_average.csv')
-    observed_location = os.path.join(
-        data_store_path, 'OBSERVATIONS/LLdM_AOI2/catalogo.csv')
     historical_gcm_files = glob.glob(
         os.path.join(data_store_path, 'GCMs',
                      f'Amazon__{gcm_var}_day_{gcm_model}_historical_*.nc'))
@@ -372,9 +404,6 @@ if __name__ == "__main__":
         raise ValueError(
             f'ambiguous GCM files selected: {historical_gcm_files}, '
             f'{future_gcm_files}')
-
-    # locations = pandas.read_csv(observed_location)
-    # lon, lat = locations[locations['CODIGO_CAT'] == site_name][['longitud', 'latitud']].values[0]
 
     simulation_dates_index = date_range_no_leap(
         prediction_period_start_date,
@@ -393,32 +422,14 @@ if __name__ == "__main__":
                 f'{prediction_period_end_date} is outside the time-range of the gcm'
                 f'({gcm_start_date} : {gcm_end_date})')
 
+        LOGGER.info('rasterizing AOI')
         mfds = shift_longitude_from_360(mfds)
-        width = mfds.coords['lon'][1] - mfds.coords['lon'][0]
-        height = mfds.coords['lat'][1] - mfds.coords['lat'][0]
-        width = width.to_numpy()
-        height = height.to_numpy()
-        coords = {
-            'lon': numpy.sort(mfds.coords['lon']),   # W -> E
-            'lat': -numpy.sort(-mfds.coords['lat'])  # N -> S
-        }
-        bbox = pygeoprocessing.get_vector_info(aoi_path)['bounding_box']
-        # expand bbox by one gcm cell on each side, only really necessary
-        # if we rasterize with ALL_TOUCHED=TRUE
-        minx = bbox[0] - width
-        miny = bbox[1] - height
-        maxx = bbox[2] + width
-        maxy = bbox[3] + height
-        mfds = mfds.where(
-            (mfds.lon >= minx) & (mfds.lon <= maxx)
-            & (mfds.lat >= miny) & (mfds.lat <= maxy),
-            drop=True)
+        mfds['aoi'] = rasterize(aoi_path, mfds, fill=0)
+        mfds = mfds.where(mfds.aoi == 1, drop=True)
+        mfds = mfds.mean(['lat', 'lon'])
+        mfds.to_netcdf(temp_netcdf_path)
 
-        translation = Affine.translation(coords['lon'][0] - width / 2, coords['lat'][-1] - height / 2)
-        scale = Affine.scale(width, height)
-        transform = translation * scale
-        aoi_df = geopandas.read_file(aoi_path)
-        mfds['aoi'] = rasterize(aoi_df.geometry, coords, transform, fill=0)
+    with xarray.open_dataset(temp_netcdf_path) as dataset:
 
         downscale_precipitation(
             observed_precip_path,
@@ -426,6 +437,7 @@ if __name__ == "__main__":
             simulation_dates_index,
             ref_period_start_date,
             ref_period_end_date,
-            mfds.where(mfds.aoi == 1),
-            precip_percentile_thresholds,
+            dataset,
+            upper_precip_percentile,
+            lower_precip_threshold,
             target_csv_path)
