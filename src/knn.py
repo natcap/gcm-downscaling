@@ -216,9 +216,12 @@ def marginal_probability_of_transitions(observed_matrix, delta_matrix):
     projected_jp_matrix[projected_jp_matrix < 0] = 0
 
     def func(x):
-        if x.sum() > 0:
-            return x / x.sum()
-        return x
+        if x.sum() <= 0:
+            # all joint probabilities <=0;
+            # force marginal probabilities to be uniform
+            # TODO: is there a better way to handle this?
+            x = numpy.ones_like(x)
+        return x / x.sum()
 
     return numpy.apply_along_axis(func, 1, projected_jp_matrix)
 
@@ -377,8 +380,8 @@ def downscale_precipitation(
 if __name__ == "__main__":
     ref_period_start_date = '1985-01-01'
     ref_period_end_date = '2014-12-31'
-    prediction_period_start_date = '2023-01-01'
-    prediction_period_end_date = '2025-01-01'
+    prediction_period_start_date = '1980-01-01'
+    prediction_period_end_date = '2010-01-01'
     data_store_path = 'H://Shared drives/GCM_Climate_Tool/required_files'
     precip_var = 'regional_pr'
     gcm_var = 'pr'
@@ -386,8 +389,8 @@ if __name__ == "__main__":
     gcm_model = 'CanESM5'
     upper_precip_percentile = (75)
     lower_precip_threshold = 1  # millimeter
-    target_csv_path = 'downscaled_precip.csv'
-    temp_directory = tempfile.mkdtemp()
+    target_csv_path = 'downscaled_precip_hindcast.csv'
+    temp_directory = tempfile.mkdtemp()  # TODO: use a local dir isntead of system's temp
     temp_netcdf_path = os.path.join(temp_directory, 'mean.nc')
 
     aoi_path = os.path.join(
