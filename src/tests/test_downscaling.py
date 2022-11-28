@@ -140,7 +140,7 @@ class TestKNN(unittest.TestCase):
         numpy.testing.assert_array_almost_equal(jp_matrix, expected_matrix)
 
     def test_marginal_probabilities(self):
-        """Test marginal probability calc when JP shift to <= 0."""
+        """Test marginal probability calc when JP shifts to <= 0."""
         from .. import knn
 
         # These matrices occurred when running the program.

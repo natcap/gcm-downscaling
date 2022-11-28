@@ -16,8 +16,11 @@ import rasterio
 import xarray
 
 LOGGER = logging.getLogger(__name__)
-handler = logging.StreamHandler(sys.stdout)
-logging.basicConfig(level=logging.INFO, handlers=[handler])
+logging.basicConfig(
+    level=logging.INFO,
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler("log.txt")])
 
 DRY = 0  # joint-probability matrices are (3, 3) and index at 0.
 WET = 1
@@ -202,7 +205,7 @@ def slice_dates_around_dayofyear(dates_index, month, day, near_window):
     return numpy.array([i for r in ranges for i in r])
 
 
-def marginal_probability_of_transitions(observed_matrix, delta_matrix):
+def marginal_probability_of_transitions(observed_matrix, delta_matrix, date):
     """Add joint-probability matrices; calculate marginal probability matrix.
 
     Args:
@@ -213,13 +216,25 @@ def marginal_probability_of_transitions(observed_matrix, delta_matrix):
         (numpy.array): 2-d array of shape (3,3)
     """
     projected_jp_matrix = observed_matrix + delta_matrix
-    projected_jp_matrix[projected_jp_matrix < 0] = 0
+    # projected_jp_matrix[projected_jp_matrix < 0] = 0
+
+    # if numpy.any(projected_jp_matrix.sum(axis=1) <= 0):
+    #     LOGGER.info(date)
+    #     LOGGER.info(projected_jp_matrix)
+
+    # def func(x):
+    #     if x.sum() <= 0:
+    #         # all joint probabilities <=0;
+    #         # force marginal probabilities to be uniform
+    #         # TODO: is there a better way to handle this?
+    #         x = numpy.ones_like(x)
+    #         # LOGGER.info('all joint probabilities were <= 0')
+    #     return x / x.sum()
 
     def func(x):
-        if x.sum() <= 0:
-            # all joint probabilities <=0;
-            # force marginal probabilities to be uniform
-            # TODO: is there a better way to handle this?
+        if x.all() <= 0:
+            x = x + numpy.abs(x.min())
+        if x.sum() == 0:
             x = numpy.ones_like(x)
         return x / x.sum()
 
@@ -257,7 +272,7 @@ def compute_historical_jp_matrices(
 def downscale_precipitation(
         observed_data_path, var, simulation_dates_index, reference_start_date,
         reference_end_date, gcm_dataset, upper_precip_percentile,
-        lower_precip_threshold, target_csv_path):
+        lower_precip_threshold, target_csv_path, hindcast=False):
     dates_lookup = {}
 
     obs_df = pandas.read_csv(
@@ -265,47 +280,56 @@ def downscale_precipitation(
         usecols=['Year', 'Month', 'Day', var],
         parse_dates={'date': ['Year', 'Month', 'Day']})
     obs_df.set_index('date', inplace=True)
-    obs_df = obs_df[reference_start_date: reference_end_date]
+    ref_obs_df = obs_df[reference_start_date: reference_end_date]
 
     LOGGER.info(
         f'computing observed JP matrices for reference period '
         f'{reference_start_date} : {reference_end_date}')
     lower_bound_obs = lower_precip_threshold
     upper_bound_obs = numpy.percentile(
-        obs_df[var].values, q=upper_precip_percentile)
-    transitions_array_obs = state_transition_series(
-        obs_df[var].values, lower_bound_obs, upper_bound_obs)
-    historic_obs_jp_matrix_lookup = compute_historical_jp_matrices(
-        transitions_array_obs, obs_df.index)
-
+        ref_obs_df[var].values, q=upper_precip_percentile)
     LOGGER.info(
-        f'computing GCM JP matrices for reference period '
-        f'{reference_start_date} : {reference_end_date}')
-    gcm_reference_period_ds = gcm_dataset.sel(
-        time=slice(reference_start_date, reference_end_date))
-    lower_bound_gcm = lower_precip_threshold / KG_M2S_TO_MM
-    upper_bound_gcm = numpy.percentile(
-        gcm_reference_period_ds.pr.values, q=upper_precip_percentile)
-    transitions_array_gcm = state_transition_series(
-        gcm_reference_period_ds.pr.values, lower_bound_gcm, upper_bound_gcm)
-    reference_period_date_index = pandas.DatetimeIndex(
-        gcm_reference_period_ds.time.values)
-    historic_gcm_jp_matrix_lookup = compute_historical_jp_matrices(
-        transitions_array_gcm, reference_period_date_index)
+        f'Threshold precip values used for observational record: '
+        f'Lower bound: {lower_bound_obs}, '
+        f'Upper Bound: {upper_bound_obs}')
+    transitions_array_obs = state_transition_series(
+        ref_obs_df[var].values, lower_bound_obs, upper_bound_obs)
+    historic_obs_jp_matrix_lookup = compute_historical_jp_matrices(
+        transitions_array_obs, ref_obs_df.index)
+
+    if not hindcast:
+        LOGGER.info(
+            f'computing GCM JP matrices for reference period '
+            f'{reference_start_date} : {reference_end_date}')
+        gcm_reference_period_ds = gcm_dataset.sel(
+            time=slice(reference_start_date, reference_end_date))
+        lower_bound_gcm = lower_precip_threshold / KG_M2S_TO_MM
+        upper_bound_gcm = numpy.percentile(
+            gcm_reference_period_ds.pr.values, q=upper_precip_percentile)
+        LOGGER.info(
+            f'Threshold precip values used for GCM record: '
+            f'Lower bound: {lower_bound_gcm}, '
+            f'Upper Bound: {upper_bound_gcm}')
+        transitions_array_gcm = state_transition_series(
+            gcm_reference_period_ds.pr.values, lower_bound_gcm, upper_bound_gcm)
+        reference_period_date_index = pandas.DatetimeIndex(
+            gcm_reference_period_ds.time.values)
+        historic_gcm_jp_matrix_lookup = compute_historical_jp_matrices(
+            transitions_array_gcm, reference_period_date_index)
 
     day_one = simulation_dates_index[0]
     window_idx = slice_dates_around_dayofyear(
-            obs_df.index, day_one.month, day_one.day, NEAR_WINDOW)
+            ref_obs_df.index, day_one.month, day_one.day, NEAR_WINDOW)
 
     LOGGER.info(
         f'Simulating precip for period {simulation_dates_index.min()} : '
         f'{simulation_dates_index.max()}')
-    a_date = pandas.Timestamp(obs_df.index[numpy.random.choice(window_idx)])
+    a_date = pandas.Timestamp(ref_obs_df.index[numpy.random.choice(window_idx)])
     for sim_date in simulation_dates_index:
         # TODO: don't need to re-determine this here, we know the wetstate
         # because we chose it deliberately. Though having this revealed
         # a bug in our indexing....
-        precip = obs_df[obs_df.index == a_date][var].values[0]
+        precip = ref_obs_df[ref_obs_df.index == a_date][var].values[0]
         current_wet_state = WET
         if precip <= lower_bound_obs:
             current_wet_state = DRY
@@ -322,19 +346,30 @@ def downscale_precipitation(
         date_offset = pandas.DateOffset(days=NEAR_WINDOW)
         window_start = sim_date - date_offset
         window_end = sim_date + date_offset
-        array = gcm_dataset.sel(time=slice(window_start, window_end)).pr.values
-        # TODO: Is it okay for the window to overlap the historical period?
-        # This occurs in the first NEAR_WINDOW days of the prediction
-        # period.
+        if not hindcast:
+            array = gcm_dataset.sel(time=slice(window_start, window_end)).pr.values
+            # TODO: Is it okay for the window to overlap the historical period?
+            # This occurs in the first NEAR_WINDOW days of the prediction
+            # period.
 
-        jp_matrix = tri_state_joint_probability(
-            array, lower_bound_gcm, upper_bound_gcm)
-        gcm_ref_jp_matrix = historic_gcm_jp_matrix_lookup[sim_date.month][sim_date.day]
-        delta_jp_doy_yr = jp_matrix - gcm_ref_jp_matrix
+            jp_matrix = tri_state_joint_probability(
+                array, lower_bound_gcm, upper_bound_gcm)
+            gcm_ref_jp_matrix = historic_gcm_jp_matrix_lookup[sim_date.month][sim_date.day]
+            delta_jp_doy_yr = jp_matrix - gcm_ref_jp_matrix
+        else:
+            array = obs_df[window_start:window_end][var].values
+            # TODO: Is it okay for the window to overlap the historical period?
+            # This occurs in the first NEAR_WINDOW days of the prediction
+            # period.
+
+            jp_matrix = tri_state_joint_probability(
+                array, lower_bound_obs, upper_bound_obs)
+            ref_jp_matrix = historic_obs_jp_matrix_lookup[sim_date.month][sim_date.day]
+            delta_jp_doy_yr = jp_matrix - ref_jp_matrix
 
         observed_jp_doy = historic_obs_jp_matrix_lookup[sim_date.month][sim_date.day]
         margins_matrix = marginal_probability_of_transitions(
-            observed_jp_doy, delta_jp_doy_yr)
+            observed_jp_doy, delta_jp_doy_yr, sim_date)
         next_wet_state = numpy.random.choice(
             [DRY, WET, VERY_WET], p=margins_matrix[current_wet_state])
         sim_dict['next_wet_state'] = next_wet_state
@@ -345,7 +380,7 @@ def downscale_precipitation(
             # transitions array is one day shorter than historical record
             # so trim the last day off the historical record before indexing.
             window_idx = slice_dates_around_dayofyear(
-                obs_df.index[:-1], sim_date.month, sim_date.day, search_window)
+                ref_obs_df.index[:-1], sim_date.month, sim_date.day, search_window)
             valid_mask = transitions_array_obs[window_idx] == \
                 TRANSITION_TYPES[current_wet_state][next_wet_state]
             search_window += 1
@@ -357,7 +392,7 @@ def downscale_precipitation(
 
         # Which leading-day from the matching transitions is most similar to
         # the current day's precip?
-        neighbors = obs_df.iloc[window_idx[valid_mask], ]
+        neighbors = ref_obs_df.iloc[window_idx[valid_mask], ]
         inverse_distances = 1 / (
             numpy.abs(neighbors[var].values - precip) + EPSILON)
         weights = inverse_distances / inverse_distances.sum()
@@ -366,8 +401,8 @@ def downscale_precipitation(
         # to just add 1 day, we might hit Feb 29th, which might not exist in
         # observed record. So find the index of the NN date from the observed
         # record and get the subsequent record's date.
-        chosen_idx = obs_df.index.get_loc(nearest) + 1
-        a_date = obs_df.index[chosen_idx]
+        chosen_idx = ref_obs_df.index.get_loc(nearest) + 1
+        a_date = ref_obs_df.index[chosen_idx]
         sim_dict['next_historic_date'] = a_date
 
         dates_lookup[sim_date] = sim_dict
@@ -382,6 +417,7 @@ if __name__ == "__main__":
     ref_period_end_date = '2014-12-31'
     prediction_period_start_date = '1980-01-01'
     prediction_period_end_date = '2010-01-01'
+    hindcast = True
     data_store_path = 'H://Shared drives/GCM_Climate_Tool/required_files'
     precip_var = 'regional_pr'
     gcm_var = 'pr'
@@ -415,6 +451,8 @@ if __name__ == "__main__":
     with xarray.open_mfdataset(
             [historical_gcm_files[0], future_gcm_files[0]]) as mfds:
 
+        # TODO: move this validation to a function. Also validate for hindcasts,
+        # that the prediction dates are within bounds of observed data.
         gcm_start_date = mfds.time.values.min()
         gcm_end_date = mfds.time.values.max()
         date_offset = datetime.timedelta(days=NEAR_WINDOW)
@@ -443,4 +481,5 @@ if __name__ == "__main__":
             dataset,
             upper_precip_percentile,
             lower_precip_threshold,
-            target_csv_path)
+            target_csv_path,
+            hindcast=hindcast)
