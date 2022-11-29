@@ -133,23 +133,17 @@ def tri_state_joint_probability(timeseries, lower_bound, upper_bound):
     a_low_mask = a <= lower_bound
     jp_matrix[0, 0] = numpy.count_nonzero(b[a_low_mask] <= lower_bound)
     jp_matrix[0, 2] = numpy.count_nonzero(b[a_low_mask] > upper_bound)
-    jp_matrix[0, 1] = numpy.count_nonzero((b[a_low_mask] > lower_bound) & (b[a_low_mask] <= upper_bound))
-    # jp_matrix[0, 1] = numpy.count_nonzero(
-    #     numpy.count_nonzero(a_low_mask) - jp_matrix[0, 0] - jp_matrix[0, 2])
+    jp_matrix[0, 1] = numpy.count_nonzero(a_low_mask) - jp_matrix[0, 0] - jp_matrix[0, 2]
 
     a_high_mask = a > upper_bound
     jp_matrix[2, 0] = numpy.count_nonzero(b[a_high_mask] <= lower_bound)
     jp_matrix[2, 2] = numpy.count_nonzero(b[a_high_mask] > upper_bound)
-    jp_matrix[2, 1] = numpy.count_nonzero((b[a_high_mask] > lower_bound) & (b[a_high_mask] <= upper_bound))
-    # jp_matrix[2, 1] = numpy.count_nonzero(
-    #     numpy.count_nonzero(a_high_mask) - jp_matrix[2, 0] - jp_matrix[2, 2])
+    jp_matrix[2, 1] = numpy.count_nonzero(a_high_mask) - jp_matrix[2, 0] - jp_matrix[2, 2]
 
     a_med_mask = (a > lower_bound) & (a <= upper_bound)
     jp_matrix[1, 0] = numpy.count_nonzero(b[a_med_mask] <= lower_bound)
     jp_matrix[1, 2] = numpy.count_nonzero(b[a_med_mask] > upper_bound)
-    jp_matrix[1, 1] = numpy.count_nonzero((b[a_med_mask] > lower_bound) & (b[a_med_mask] <= upper_bound))
-    # jp_matrix[1, 1] = numpy.count_nonzero(
-    #     numpy.count_nonzero(a_med_mask) - jp_matrix[1, 0] - jp_matrix[1, 2])
+    jp_matrix[1, 1] = numpy.count_nonzero(a_med_mask) - jp_matrix[1, 0] - jp_matrix[1, 2]
 
     return (jp_matrix / numpy.sum(jp_matrix))
 
@@ -416,9 +410,9 @@ def downscale_precipitation(
 if __name__ == "__main__":
     ref_period_start_date = '1985-01-01'
     ref_period_end_date = '2014-12-31'
-    prediction_period_start_date = '2030-01-01'
-    prediction_period_end_date = '2060-01-01'
-    hindcast = False
+    prediction_period_start_date = '1980-01-01'
+    prediction_period_end_date = '2010-01-01'
+    hindcast = True
     data_store_path = 'H://Shared drives/GCM_Climate_Tool/required_files'
     gcm_var = 'pr'
     gcm_experiment = 'ssp126'
