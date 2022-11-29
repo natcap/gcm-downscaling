@@ -16,11 +16,6 @@ import rasterio
 import xarray
 
 LOGGER = logging.getLogger(__name__)
-logging.basicConfig(
-    level=logging.INFO,
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler("log.txt")])
 
 DRY = 0  # joint-probability matrices are (3, 3) and index at 0.
 WET = 1
@@ -424,67 +419,57 @@ def validate(dataset, prediction_start_date, prediction_end_date):
             f'({gcm_start_date} : {gcm_end_date})')
 
 
-if __name__ == "__main__":
-    ref_period_start_date = '1985-01-01'
-    ref_period_end_date = '2014-12-31'
-    prediction_start_date = '1980-01-01'
-    prediction_end_date = '2010-01-01'
-    hindcast = True
-    data_store_path = 'H://Shared drives/GCM_Climate_Tool/required_files'
-    gcm_var = 'pr'
-    gcm_experiment_list = ['ssp126']
-    gcm_model_list = ['CanESM5']
-    upper_precip_percentile = (75)
-    lower_precip_threshold = 1  # millimeter
-    aoi_path = os.path.join(
-        data_store_path, 'OBSERVATIONS/LLdM_AOI2/SHP/Basin_LldM.shp')
-    observed_precip_path = os.path.join(
-        data_store_path, 'OBSERVATIONS/LLdM_AOI2/series_pr_diario_regional_average.nc')
+def execute(args):
+    LOGGER.info(args)
 
-    if hindcast:
-        target_csv_path = f'downscaled_precip_hindcast.csv'
+    if args['hindcast']:
+        target_csv_path = os.path.join(
+            args['workspace_dir'], 'downscaled_precip_hindcast.csv')
         temp_netcdf_path = None
         downscale_precipitation(
-                observed_precip_path,
-                prediction_start_date,
-                prediction_end_date,
-                ref_period_start_date,
-                ref_period_end_date,
+                args['observed_precip_path'],
+                args['prediction_start_date'],
+                args['prediction_end_date'],
+                args['ref_period_start_date'],
+                args['ref_period_end_date'],
                 temp_netcdf_path,
-                lower_precip_threshold,
-                upper_precip_percentile,
+                args['lower_precip_threshold'],
+                args['upper_precip_percentile'],
                 target_csv_path,
-                hindcast=hindcast)
-    else:
-        for gcm_model in gcm_model_list:
-            for gcm_experiment in gcm_experiment_list:
-                target_csv_path = f'downscaled_precip_{gcm_model}_{gcm_experiment}.csv'
-                temp_directory = tempfile.mkdtemp()  # TODO: use a local dir isntead of system's temp
-                temp_netcdf_path = os.path.join(temp_directory, 'mean.nc')
-                historical_gcm_files = glob.glob(
-                    os.path.join(data_store_path, 'GCMs',
-                                 f'Amazon__{gcm_var}_day_{gcm_model}_historical_*.nc'))
-                future_gcm_files = glob.glob(
-                    os.path.join(data_store_path, 'GCMs',
-                                 f'Amazon__{gcm_var}_day_{gcm_model}_{gcm_experiment}_*.nc'))
-                if len(historical_gcm_files) > 1 | len(future_gcm_files) > 1:
-                    raise ValueError(
-                        f'ambiguous GCM files selected: {historical_gcm_files}, '
-                        f'{future_gcm_files}')
+                hindcast=True)
+        return None
 
-                with xarray.open_mfdataset(
-                        [historical_gcm_files[0], future_gcm_files[0]]) as mfds:
-                    validate(mfds, prediction_start_date, prediction_end_date)
-                    mask_netcdf(mfds, aoi_path, temp_netcdf_path)
+    for gcm_model in args['gcm_model_list']:
+        for gcm_experiment in args['gcm_experiment_list']:
+            target_csv_path = os.path.join(
+                args['workspace_dir'],
+                f'downscaled_precip_{gcm_model}_{gcm_experiment}.csv')
+            temp_directory = tempfile.mkdtemp(args['workspace_dir'])
+            temp_netcdf_path = os.path.join(temp_directory, 'mean.nc')
+            historical_gcm_files = glob.glob(
+                os.path.join(args['data_store_path'], 'GCMs',
+                             f"Amazon__{args['gcm_var']}_day_{gcm_model}_historical_*.nc"))
+            future_gcm_files = glob.glob(
+                os.path.join(args['data_store_path'], 'GCMs',
+                             f"Amazon__{args['gcm_var']}_day_{gcm_model}_{gcm_experiment}_*.nc"))
+            if len(historical_gcm_files) > 1 | len(future_gcm_files) > 1:
+                raise ValueError(
+                    f'ambiguous GCM files selected: {historical_gcm_files}, '
+                    f'{future_gcm_files}')
 
-                downscale_precipitation(
-                    observed_precip_path,
-                    prediction_start_date,
-                    prediction_end_date,
-                    ref_period_start_date,
-                    ref_period_end_date,
-                    temp_netcdf_path,
-                    lower_precip_threshold,
-                    upper_precip_percentile,
-                    target_csv_path,
-                    hindcast=hindcast)
+            with xarray.open_mfdataset(
+                    [historical_gcm_files[0], future_gcm_files[0]]) as mfds:
+                validate(mfds, args['prediction_start_date'],
+                         args['prediction_end_date'])
+                mask_netcdf(mfds, args['aoi_path'], temp_netcdf_path)
+
+            downscale_precipitation(
+                args['observed_precip_path'],
+                args['prediction_start_date'],
+                args['prediction_end_date'],
+                args['ref_period_start_date'],
+                args['ref_period_end_date'],
+                temp_netcdf_path,
+                args['lower_precip_threshold'],
+                args['upper_precip_percentile'],
+                target_csv_path)
