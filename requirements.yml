@@ -1,0 +1,14 @@
+channels:
+- conda-forge
+- defaults
+dependencies:
+- dask
+- ipython
+- matplotlib
+- netCDF4
+- numpy
+- pandas
+- pygeoprocessing
+- pytest
+- rasterio
+- xarray
