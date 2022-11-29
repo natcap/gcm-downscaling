@@ -258,9 +258,10 @@ def compute_historical_jp_matrices(
 
 
 def downscale_precipitation(
-        observed_data_path, simulation_dates_index, reference_start_date,
-        reference_end_date, gcm_netcdf_path, upper_precip_percentile,
-        lower_precip_threshold, target_csv_path, hindcast=False):
+        observed_data_path, prediction_start_date, prediction_end_date,
+        reference_start_date, reference_end_date, gcm_netcdf_path,
+        lower_precip_threshold, upper_precip_percentile, target_csv_path,
+        hindcast=False):
     dates_lookup = {}
 
     with xarray.open_dataset(observed_data_path) as obs_dataset:
@@ -292,7 +293,7 @@ def downscale_precipitation(
         upper_bound_gcm = upper_bound_obs
         historic_gcm_jp_matrix_lookup = historic_obs_jp_matrix_lookup
     else:
-        with xarray.open_dataset(temp_netcdf_path) as gcm_dataset:
+        with xarray.open_dataset(gcm_netcdf_path) as gcm_dataset:
             LOGGER.info(
                 f'computing GCM JP matrices for reference period '
                 f'{reference_start_date} : {reference_end_date}')
@@ -314,13 +315,14 @@ def downscale_precipitation(
             historic_gcm_jp_matrix_lookup = compute_historical_jp_matrices(
                 transitions_array_gcm, gcm_ref_period_date_index)
 
-    day_one = simulation_dates_index[0]
-    window_idx = slice_dates_around_dayofyear(
-            obs_ref_period_date_index, day_one.month, day_one.day, NEAR_WINDOW)
-
+    simulation_dates_index = date_range_no_leap(
+        prediction_start_date, prediction_end_date)
     LOGGER.info(
         f'Simulating precip for period {simulation_dates_index.min()} : '
         f'{simulation_dates_index.max()}')
+    day_one = simulation_dates_index[0]
+    window_idx = slice_dates_around_dayofyear(
+            obs_ref_period_date_index, day_one.month, day_one.day, NEAR_WINDOW)
     a_date = obs_reference_period_ds.time[numpy.random.choice(window_idx)].values
     for sim_date in simulation_dates_index:
         # TODO: don't need to re-determine this here, we know the wetstate
@@ -398,70 +400,91 @@ def downscale_precipitation(
     LOGGER.info(f'Simulation complete. Created file: {target_csv_path}')
 
 
+def mask_netcdf(dataset, aoi_path, target_netcdf_path):
+    # TODO: validate that AOI has geographic coordinates
+    LOGGER.info('rasterizing AOI')
+    dataset = shift_longitude_from_360(dataset)
+    dataset['aoi'] = rasterize(aoi_path, dataset, fill=0)
+    dataset = dataset.where(dataset.aoi == 1, drop=True)
+    dataset = dataset.mean(['lat', 'lon'])
+    dataset.to_netcdf(target_netcdf_path)
+
+
+def validate(dataset, prediction_start_date, prediction_end_date):
+    # TODO: Also validate for hindcasts,
+    # that the prediction dates are within bounds of observed data.
+    gcm_start_date = dataset.time.values.min()
+    gcm_end_date = dataset.time.values.max()
+    date_offset = datetime.timedelta(days=NEAR_WINDOW)
+    if ((pandas.Timestamp(prediction_end_date) + date_offset) > gcm_end_date or
+            (pandas.Timestamp(prediction_start_date) - date_offset) < gcm_start_date):
+        raise ValueError(
+            f'the requested prediction period {prediction_start_date} : '
+            f'{prediction_end_date} is outside the time-range of the gcm'
+            f'({gcm_start_date} : {gcm_end_date})')
+
+
 if __name__ == "__main__":
     ref_period_start_date = '1985-01-01'
     ref_period_end_date = '2014-12-31'
-    prediction_period_start_date = '1980-01-01'
-    prediction_period_end_date = '2010-01-01'
+    prediction_start_date = '1980-01-01'
+    prediction_end_date = '2010-01-01'
     hindcast = True
     data_store_path = 'H://Shared drives/GCM_Climate_Tool/required_files'
     gcm_var = 'pr'
-    gcm_experiment = 'ssp126'
-    gcm_model = 'CanESM5'
+    gcm_experiment_list = ['ssp126']
+    gcm_model_list = ['CanESM5']
     upper_precip_percentile = (75)
     lower_precip_threshold = 1  # millimeter
-    target_csv_path = 'downscaled_precip.csv'
-    temp_directory = tempfile.mkdtemp()  # TODO: use a local dir isntead of system's temp
-    temp_netcdf_path = os.path.join(temp_directory, 'mean.nc')
-
     aoi_path = os.path.join(
         data_store_path, 'OBSERVATIONS/LLdM_AOI2/SHP/Basin_LldM.shp')
     observed_precip_path = os.path.join(
         data_store_path, 'OBSERVATIONS/LLdM_AOI2/series_pr_diario_regional_average.nc')
-    historical_gcm_files = glob.glob(
-        os.path.join(data_store_path, 'GCMs',
-                     f'Amazon__{gcm_var}_day_{gcm_model}_historical_*.nc'))
-    future_gcm_files = glob.glob(
-        os.path.join(data_store_path, 'GCMs',
-                     f'Amazon__{gcm_var}_day_{gcm_model}_{gcm_experiment}_*.nc'))
-    if len(historical_gcm_files) > 1 | len(future_gcm_files) > 1:
-        raise ValueError(
-            f'ambiguous GCM files selected: {historical_gcm_files}, '
-            f'{future_gcm_files}')
 
-    simulation_dates_index = date_range_no_leap(
-        prediction_period_start_date,
-        prediction_period_end_date)
+    if hindcast:
+        target_csv_path = f'downscaled_precip_hindcast.csv'
+        temp_netcdf_path = None
+        downscale_precipitation(
+                observed_precip_path,
+                prediction_start_date,
+                prediction_end_date,
+                ref_period_start_date,
+                ref_period_end_date,
+                temp_netcdf_path,
+                lower_precip_threshold,
+                upper_precip_percentile,
+                target_csv_path,
+                hindcast=hindcast)
+    else:
+        for gcm_model in gcm_model_list:
+            for gcm_experiment in gcm_experiment_list:
+                target_csv_path = f'downscaled_precip_{gcm_model}_{gcm_experiment}.csv'
+                temp_directory = tempfile.mkdtemp()  # TODO: use a local dir isntead of system's temp
+                temp_netcdf_path = os.path.join(temp_directory, 'mean.nc')
+                historical_gcm_files = glob.glob(
+                    os.path.join(data_store_path, 'GCMs',
+                                 f'Amazon__{gcm_var}_day_{gcm_model}_historical_*.nc'))
+                future_gcm_files = glob.glob(
+                    os.path.join(data_store_path, 'GCMs',
+                                 f'Amazon__{gcm_var}_day_{gcm_model}_{gcm_experiment}_*.nc'))
+                if len(historical_gcm_files) > 1 | len(future_gcm_files) > 1:
+                    raise ValueError(
+                        f'ambiguous GCM files selected: {historical_gcm_files}, '
+                        f'{future_gcm_files}')
 
-    with xarray.open_mfdataset(
-            [historical_gcm_files[0], future_gcm_files[0]]) as mfds:
+                with xarray.open_mfdataset(
+                        [historical_gcm_files[0], future_gcm_files[0]]) as mfds:
+                    validate(mfds, prediction_start_date, prediction_end_date)
+                    mask_netcdf(mfds, aoi_path, temp_netcdf_path)
 
-        # TODO: move this validation to a function. Also validate for hindcasts,
-        # that the prediction dates are within bounds of observed data.
-        gcm_start_date = mfds.time.values.min()
-        gcm_end_date = mfds.time.values.max()
-        date_offset = datetime.timedelta(days=NEAR_WINDOW)
-        if ((pandas.Timestamp(prediction_period_end_date) + date_offset) > gcm_end_date or
-                (pandas.Timestamp(prediction_period_start_date) - date_offset) < gcm_start_date):
-            raise ValueError(
-                f'the requested prediction period {prediction_period_start_date} : '
-                f'{prediction_period_end_date} is outside the time-range of the gcm'
-                f'({gcm_start_date} : {gcm_end_date})')
-
-        LOGGER.info('rasterizing AOI')
-        mfds = shift_longitude_from_360(mfds)
-        mfds['aoi'] = rasterize(aoi_path, mfds, fill=0)
-        mfds = mfds.where(mfds.aoi == 1, drop=True)
-        mfds = mfds.mean(['lat', 'lon'])
-        mfds.to_netcdf(temp_netcdf_path)
-
-    downscale_precipitation(
-        observed_precip_path,
-        simulation_dates_index,
-        ref_period_start_date,
-        ref_period_end_date,
-        temp_netcdf_path,
-        upper_precip_percentile,
-        lower_precip_threshold,
-        target_csv_path,
-        hindcast=hindcast)
+                downscale_precipitation(
+                    observed_precip_path,
+                    prediction_start_date,
+                    prediction_end_date,
+                    ref_period_start_date,
+                    ref_period_end_date,
+                    temp_netcdf_path,
+                    lower_precip_threshold,
+                    upper_precip_percentile,
+                    target_csv_path,
+                    hindcast=hindcast)

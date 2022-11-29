@@ -57,7 +57,7 @@ class TestKNN(unittest.TestCase):
             shifted_dataset.lon.to_numpy(), lon)
 
     def test_tri_state_joint_probability(self):
-        """Test tri_state_joint_probability.py."""
+        """Test tri_state_joint_probability."""
         from .. import knn
 
         timeseries = numpy.array(
@@ -65,7 +65,6 @@ class TestKNN(unittest.TestCase):
         lower_bound = 1.5
         upper_bound = 7.5
 
-        # This is the result from the R version of this function
         expected_matrix = numpy.array([
             [0.3, 0.1, 0.1],
             [0.1, 0.2, 0.0],
