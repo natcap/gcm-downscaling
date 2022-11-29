@@ -157,7 +157,7 @@ class TestKNN(unittest.TestCase):
             [ 0.        ,  0.02662217,  0.24330738]])
 
         result = knn.marginal_probability_of_transitions(
-            observed_jp_matrix, delta_jp_matrix)
+            observed_jp_matrix + delta_jp_matrix)
 
         sums = numpy.sum(result, axis=1)
         self.assertTrue(numpy.all(sums > 0))

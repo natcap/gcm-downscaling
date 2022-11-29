@@ -133,20 +133,23 @@ def tri_state_joint_probability(timeseries, lower_bound, upper_bound):
     a_low_mask = a <= lower_bound
     jp_matrix[0, 0] = numpy.count_nonzero(b[a_low_mask] <= lower_bound)
     jp_matrix[0, 2] = numpy.count_nonzero(b[a_low_mask] > upper_bound)
-    jp_matrix[0, 1] = numpy.count_nonzero(
-        numpy.count_nonzero(a_low_mask) - jp_matrix[0, 0] - jp_matrix[0, 2])
+    jp_matrix[0, 1] = numpy.count_nonzero((b[a_low_mask] > lower_bound) & (b[a_low_mask] <= upper_bound))
+    # jp_matrix[0, 1] = numpy.count_nonzero(
+    #     numpy.count_nonzero(a_low_mask) - jp_matrix[0, 0] - jp_matrix[0, 2])
 
     a_high_mask = a > upper_bound
     jp_matrix[2, 0] = numpy.count_nonzero(b[a_high_mask] <= lower_bound)
     jp_matrix[2, 2] = numpy.count_nonzero(b[a_high_mask] > upper_bound)
-    jp_matrix[2, 1] = numpy.count_nonzero(
-        numpy.count_nonzero(a_high_mask) - jp_matrix[2, 0] - jp_matrix[2, 2])
+    jp_matrix[2, 1] = numpy.count_nonzero((b[a_high_mask] > lower_bound) & (b[a_high_mask] <= upper_bound))
+    # jp_matrix[2, 1] = numpy.count_nonzero(
+    #     numpy.count_nonzero(a_high_mask) - jp_matrix[2, 0] - jp_matrix[2, 2])
 
     a_med_mask = (a > lower_bound) & (a <= upper_bound)
     jp_matrix[1, 0] = numpy.count_nonzero(b[a_med_mask] <= lower_bound)
     jp_matrix[1, 2] = numpy.count_nonzero(b[a_med_mask] > upper_bound)
-    jp_matrix[1, 1] = numpy.count_nonzero(
-        numpy.count_nonzero(a_med_mask) - jp_matrix[1, 0] - jp_matrix[1, 2])
+    jp_matrix[1, 1] = numpy.count_nonzero((b[a_med_mask] > lower_bound) & (b[a_med_mask] <= upper_bound))
+    # jp_matrix[1, 1] = numpy.count_nonzero(
+    #     numpy.count_nonzero(a_med_mask) - jp_matrix[1, 0] - jp_matrix[1, 2])
 
     return (jp_matrix / numpy.sum(jp_matrix))
 
@@ -205,7 +208,7 @@ def slice_dates_around_dayofyear(dates_index, month, day, near_window):
     return numpy.array([i for r in ranges for i in r])
 
 
-def marginal_probability_of_transitions(observed_matrix, delta_matrix):
+def marginal_probability_of_transitions(projected_jp_matrix):
     """Add joint-probability matrices; calculate marginal probability matrix.
 
     Args:
@@ -215,8 +218,10 @@ def marginal_probability_of_transitions(observed_matrix, delta_matrix):
     Returns:
         (numpy.array): 2-d array of shape (3,3)
     """
-    projected_jp_matrix = observed_matrix + delta_matrix
+    # projected_jp_matrix = observed_matrix + delta_matrix
     projected_jp_matrix[projected_jp_matrix < 0] = 0
+    # TODO: In R, it appears there's another normalization step here:
+    # projected_jp_matrix / projected_jp_matrix.sum()
 
     def func(x):
         if x.sum() <= 0:
@@ -280,6 +285,7 @@ def downscale_precipitation(
         transitions_array_obs = state_transition_series(
             obs_reference_period_ds.pr.values,
             lower_bound_obs, upper_bound_obs)
+        pandas.DataFrame(transitions_array_obs).to_csv('observed_transitions.csv')
         obs_ref_period_date_index = pandas.DatetimeIndex(
                 obs_reference_period_ds.time.values)
         historic_obs_jp_matrix_lookup = compute_historical_jp_matrices(
@@ -308,6 +314,7 @@ def downscale_precipitation(
             transitions_array_gcm = state_transition_series(
                 gcm_reference_period_ds.pr.values,
                 lower_bound_gcm, upper_bound_gcm)
+            pandas.DataFrame(transitions_array_gcm).to_csv('gcm_transitions.csv')
             gcm_ref_period_date_index = pandas.DatetimeIndex(
                 gcm_reference_period_ds.time.values)
             historic_gcm_jp_matrix_lookup = compute_historical_jp_matrices(
@@ -321,6 +328,9 @@ def downscale_precipitation(
         f'Simulating precip for period {simulation_dates_index.min()} : '
         f'{simulation_dates_index.max()}')
     a_date = obs_reference_period_ds.time[numpy.random.choice(window_idx)].values
+    margins_sums = numpy.zeros(shape=(3, 3), dtype=float)
+    jp_sums = numpy.zeros(shape=(3, 3), dtype=float)
+    projected_sums = numpy.zeros(shape=(3, 3), dtype=float)
     for sim_date in simulation_dates_index:
         # TODO: don't need to re-determine this here, we know the wetstate
         # because we chose it deliberately. Though having this revealed
@@ -349,11 +359,15 @@ def downscale_precipitation(
 
         jp_matrix = tri_state_joint_probability(
             array, lower_bound_gcm, upper_bound_gcm)
+        jp_sums += jp_matrix
         gcm_ref_jp_matrix = historic_gcm_jp_matrix_lookup[sim_date.month][sim_date.day]
         delta_jp_doy_yr = jp_matrix - gcm_ref_jp_matrix
         observed_jp_doy = historic_obs_jp_matrix_lookup[sim_date.month][sim_date.day]
+        projected_jp_matrix = observed_jp_doy + delta_jp_doy_yr
+        projected_sums += projected_jp_matrix
         margins_matrix = marginal_probability_of_transitions(
-            observed_jp_doy, delta_jp_doy_yr)
+            projected_jp_matrix)
+        margins_sums += margins_matrix
         next_wet_state = numpy.random.choice(
             [DRY, WET, VERY_WET], p=margins_matrix[current_wet_state])
         sim_dict['next_wet_state'] = next_wet_state
@@ -394,6 +408,9 @@ def downscale_precipitation(
     dataframe = pandas.DataFrame.from_dict(dates_lookup, orient='index')
     dataframe.to_csv(target_csv_path)
     LOGGER.info(f'Simulation complete. Created file: {target_csv_path}')
+    pandas.DataFrame(margins_sums).to_csv('margins.csv')
+    pandas.DataFrame(jp_sums).to_csv('jp.csv')
+    pandas.DataFrame(projected_sums).to_csv('projected.csv')
 
 
 if __name__ == "__main__":
