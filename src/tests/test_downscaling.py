@@ -60,17 +60,15 @@ class TestKNN(unittest.TestCase):
         """Test tri_state_joint_probability.py."""
         from .. import knn
 
-        # TODO: This data is too simple, it hid a bug because we have
-        # exactly 0 or 1 transition for all transitions involving the middle
-        # bin.
-        timeseries = numpy.array([0, 0, 0, 5, 2, 1, 0, 0, 9, 8, 0])
+        timeseries = numpy.array(
+            [0, 0, 2, 5, 2, 1, 0, 0, 9, 8, 0])
         lower_bound = 1.5
         upper_bound = 7.5
 
         # This is the result from the R version of this function
         expected_matrix = numpy.array([
-            [0.4, 0.1, 0.1],
-            [0.1, 0.1, 0.0],
+            [0.3, 0.1, 0.1],
+            [0.1, 0.2, 0.0],
             [0.1, 0.0, 0.1]
         ])
 
