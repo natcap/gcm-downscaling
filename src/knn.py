@@ -322,9 +322,6 @@ def downscale_precipitation(
         f'Simulating precip for period {simulation_dates_index.min()} : '
         f'{simulation_dates_index.max()}')
     a_date = obs_reference_period_ds.time[numpy.random.choice(window_idx)].values
-    margins_sums = numpy.zeros(shape=(3, 3), dtype=float)
-    jp_sums = numpy.zeros(shape=(3, 3), dtype=float)
-    projected_sums = numpy.zeros(shape=(3, 3), dtype=float)
     for sim_date in simulation_dates_index:
         # TODO: don't need to re-determine this here, we know the wetstate
         # because we chose it deliberately. Though having this revealed
@@ -353,15 +350,12 @@ def downscale_precipitation(
 
         jp_matrix = tri_state_joint_probability(
             array, lower_bound_gcm, upper_bound_gcm)
-        jp_sums += jp_matrix
         gcm_ref_jp_matrix = historic_gcm_jp_matrix_lookup[sim_date.month][sim_date.day]
         delta_jp_doy_yr = jp_matrix - gcm_ref_jp_matrix
         observed_jp_doy = historic_obs_jp_matrix_lookup[sim_date.month][sim_date.day]
         projected_jp_matrix = observed_jp_doy + delta_jp_doy_yr
-        projected_sums += projected_jp_matrix
         margins_matrix = marginal_probability_of_transitions(
             projected_jp_matrix)
-        margins_sums += margins_matrix
         next_wet_state = numpy.random.choice(
             [DRY, WET, VERY_WET], p=margins_matrix[current_wet_state])
         sim_dict['next_wet_state'] = next_wet_state
@@ -402,9 +396,6 @@ def downscale_precipitation(
     dataframe = pandas.DataFrame.from_dict(dates_lookup, orient='index')
     dataframe.to_csv(target_csv_path)
     LOGGER.info(f'Simulation complete. Created file: {target_csv_path}')
-    pandas.DataFrame(margins_sums).to_csv('margins.csv')
-    pandas.DataFrame(jp_sums).to_csv('jp.csv')
-    pandas.DataFrame(projected_sums).to_csv('projected.csv')
 
 
 if __name__ == "__main__":
