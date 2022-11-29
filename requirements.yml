@@ -10,5 +10,5 @@ dependencies:
 - pandas
 - pygeoprocessing
 - pytest
+- rasterio
 - xarray
-- rioxarray

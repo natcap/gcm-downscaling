@@ -3,7 +3,6 @@ import datetime
 import glob
 import logging
 import os
-import sys
 import tempfile
 
 from affine import Affine
