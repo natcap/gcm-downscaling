@@ -8,12 +8,12 @@ import knn
 data_store_path = 'H://Shared drives/GCM_Climate_Tool/required_files'
 
 # TODO: If we expect that any of these arguments will *never* change
-# we should define those in knn.py instead of here.
+# we should define them in knn.py instead of here.
 args = {
     'ref_period_start_date': '1985-01-01',
     'ref_period_end_date': '2014-12-31',
     'prediction_start_date': '2030-01-01',
-    'prediction_end_date': '2050-01-01',
+    'prediction_end_date': '2032-01-01',
     'hindcast': False,
     'data_store_path': data_store_path,
     'gcm_var': 'pr',

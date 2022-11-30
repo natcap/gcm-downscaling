@@ -1,9 +1,8 @@
 from collections import defaultdict
-import datetime
+from datetime import datetime, timedelta
 import glob
 import logging
 import os
-import tempfile
 
 from affine import Affine
 import geopandas
@@ -12,10 +11,12 @@ from numpy.lib.stride_tricks import sliding_window_view
 import pandas
 import pygeoprocessing
 import rasterio
+import taskgraph
 import xarray
 
 LOGGER = logging.getLogger(__name__)
 
+NL = '\n'  # for use in f-strings where \ is not permitted
 DRY = 0  # joint-probability matrices are (3, 3) and index at 0.
 WET = 1
 VERY_WET = 2
@@ -88,23 +89,16 @@ def date_range_no_leap(start, stop):
     """Create a series of dates from start to stop, skipping leap-days.
 
     calendar='noleap' always creates 365-day years. It also forces
-    cftime-format dates, which is not so convenient. isoformat is more
-    interoperable, and pandas DatetimeIndex is most convenient for indexing.
-
-    If start & stop include a leap year, xarray will still skip
-    the leap-day, but pandas DatetimeIndex will number the date.dayofyear
-    from 0 - 366, for the leap year, skipping over day 60.
+    cftime-format dates.
 
     Args:
         start (string): of format 'YYYY-MM-DD'
         stop (string): of format 'YYYY-MM-DD'
 
     Returns:
-        (pandas.DatetimeIndex) series of dates from start to stop.
+        (CFTimeIndex) series of cftime objects.
     """
-    return pandas.DatetimeIndex(
-        [d.isoformat() for d in
-            xarray.date_range(start, stop, calendar='noleap')])
+    return xarray.date_range(start, stop, calendar='noleap')
 
 
 def tri_state_joint_probability(timeseries, lower_bound, upper_bound):
@@ -167,31 +161,31 @@ def state_transition_series(array, lower_bound, upper_bound):
     return transitions
 
 
-def slice_dates_around_dayofyear(dates_index, month, day, near_window):
+def slice_dates_around_dayofyear(dates_array, month, day, near_window):
     """Get index of dates from within an n-day window of a given day-of-year.
 
     For example, get the index of all dates from all years included in
-    `dates_index`, within `near_window` days of July 1st.
+    `dates_array`, within `near_window` days of July 1st.
 
-    Sometimes the `dates_index` comes from a historical record, which
+    Sometimes the `dates_array` comes from a historical record, which
     could have a 366-day year. So rather than getting a window
     around a day-of-year (e.g. day 65), we always get a window
     around a month-day date (e.g. March 3).
 
     Args:
-        dates_index (pandas.DatetimeIndex): daily frequency
+        dates_array (xarray.DataArray): has a `.dt` accessor; daily frequency
         month (integer): from 1 - 12
         day (integer): day of the month
         near_window (integer): number of days before & after month-day
 
     Returns:
-        (numpy.array): a 1-d array of indexes of size `dates_index`
+        (numpy.array): a 1-d array of indexes of size `dates_array`
     """
     idx = numpy.nonzero(
-        (dates_index.month == month)
-        & (dates_index.day == day))[0]
+        (dates_array.dt.month == month).data
+        & (dates_array.dt.day == day).data)[0]
     # mask to exclude dates with window extending beyond reference period
-    mask = (idx - near_window >= 0) & (idx + near_window < dates_index.size)
+    mask = (idx - near_window >= 0) & (idx + near_window < dates_array.size)
     ranges = [range(x - near_window, x + near_window + 1) for x in idx[mask]]
     return numpy.array([i for r in ranges for i in r])
 
@@ -274,11 +268,8 @@ def downscale_precipitation(
         transitions_array_obs = state_transition_series(
             obs_reference_period_ds.pr.values,
             lower_bound_obs, upper_bound_obs)
-        pandas.DataFrame(transitions_array_obs).to_csv('observed_transitions.csv')
-        obs_ref_period_date_index = pandas.DatetimeIndex(
-                obs_reference_period_ds.time.values)
         historic_obs_jp_matrix_lookup = compute_historical_jp_matrices(
-            transitions_array_obs, obs_ref_period_date_index)
+            transitions_array_obs, obs_reference_period_ds.time)
 
     # If hindcast, mock the GCM with the observational record
     if hindcast:
@@ -287,7 +278,8 @@ def downscale_precipitation(
         upper_bound_gcm = upper_bound_obs
         historic_gcm_jp_matrix_lookup = historic_obs_jp_matrix_lookup
     else:
-        with xarray.open_dataset(gcm_netcdf_path) as gcm_dataset:
+        with xarray.open_dataset(gcm_netcdf_path, use_cftime=True) as gcm_dataset:
+            validate(gcm_dataset, prediction_start_date, prediction_end_date)
             LOGGER.info(
                 f'computing GCM JP matrices for reference period '
                 f'{reference_start_date} : {reference_end_date}')
@@ -303,11 +295,8 @@ def downscale_precipitation(
             transitions_array_gcm = state_transition_series(
                 gcm_reference_period_ds.pr.values,
                 lower_bound_gcm, upper_bound_gcm)
-            pandas.DataFrame(transitions_array_gcm).to_csv('gcm_transitions.csv')
-            gcm_ref_period_date_index = pandas.DatetimeIndex(
-                gcm_reference_period_ds.time.values)
             historic_gcm_jp_matrix_lookup = compute_historical_jp_matrices(
-                transitions_array_gcm, gcm_ref_period_date_index)
+                transitions_array_gcm, gcm_reference_period_ds.time)
 
     simulation_dates_index = date_range_no_leap(
         prediction_start_date, prediction_end_date)
@@ -316,7 +305,7 @@ def downscale_precipitation(
         f'{simulation_dates_index.max()}')
     day_one = simulation_dates_index[0]
     window_idx = slice_dates_around_dayofyear(
-            obs_ref_period_date_index, day_one.month, day_one.day, NEAR_WINDOW)
+            obs_reference_period_ds.time, day_one.month, day_one.day, NEAR_WINDOW)
     a_date = obs_reference_period_ds.time[numpy.random.choice(window_idx)].values
     for sim_date in simulation_dates_index:
         # TODO: don't need to re-determine this here, we know the wetstate
@@ -336,7 +325,7 @@ def downscale_precipitation(
             'wet_state': current_wet_state,
         }
 
-        date_offset = pandas.DateOffset(days=NEAR_WINDOW)
+        date_offset = timedelta(days=NEAR_WINDOW)
         window_start = sim_date - date_offset
         window_end = sim_date + date_offset
         array = gcm_dataset.sel(time=slice(window_start, window_end)).pr.values
@@ -362,7 +351,7 @@ def downscale_precipitation(
             # transitions array is one day shorter than historical record
             # so trim the last day off the historical record before indexing.
             window_idx = slice_dates_around_dayofyear(
-                obs_ref_period_date_index[:-1],
+                obs_reference_period_ds.time[:-1],
                 sim_date.month, sim_date.day, search_window)
             valid_mask = transitions_array_obs[window_idx] == \
                 TRANSITION_TYPES[current_wet_state][next_wet_state]
@@ -394,24 +383,25 @@ def downscale_precipitation(
     LOGGER.info(f'Simulation complete. Created file: {target_csv_path}')
 
 
-def mask_netcdf(dataset, aoi_path, target_netcdf_path):
+def mask_netcdf(source_files_list, aoi_path, target_filepath):
     # TODO: validate that AOI has geographic coordinates
-    LOGGER.info('rasterizing AOI')
-    dataset = shift_longitude_from_360(dataset)
-    dataset['aoi'] = rasterize(aoi_path, dataset, fill=0)
-    dataset = dataset.where(dataset.aoi == 1, drop=True)
-    dataset = dataset.mean(['lat', 'lon'])
-    dataset.to_netcdf(target_netcdf_path)
+    with xarray.open_mfdataset(source_files_list) as dataset:
+        dataset = shift_longitude_from_360(dataset)
+        LOGGER.info('rasterizing AOI')
+        dataset['aoi'] = rasterize(aoi_path, dataset, fill=0)
+        dataset = dataset.where(dataset.aoi == 1, drop=True)
+        dataset = dataset.mean(['lat', 'lon'])
+        dataset.to_netcdf(target_filepath)
 
 
 def validate(dataset, prediction_start_date, prediction_end_date):
     # TODO: Also validate for hindcasts,
     # that the prediction dates are within bounds of observed data.
-    gcm_start_date = dataset.time.values.min()
-    gcm_end_date = dataset.time.values.max()
-    date_offset = datetime.timedelta(days=NEAR_WINDOW)
-    if ((pandas.Timestamp(prediction_end_date) + date_offset) > gcm_end_date or
-            (pandas.Timestamp(prediction_start_date) - date_offset) < gcm_start_date):
+    gcm_start_date = datetime.fromisoformat(dataset.time.min().item().isoformat())
+    gcm_end_date = datetime.fromisoformat(dataset.time.max().item().isoformat())
+    date_offset = timedelta(days=NEAR_WINDOW)
+    if ((datetime.strptime(prediction_end_date, '%Y-%m-%d') + date_offset) > gcm_end_date or
+            (datetime.strptime(prediction_start_date, '%Y-%m-%d') - date_offset) < gcm_start_date):
         raise ValueError(
             f'the requested prediction period {prediction_start_date} : '
             f'{prediction_end_date} is outside the time-range of the gcm'
@@ -419,7 +409,18 @@ def validate(dataset, prediction_start_date, prediction_end_date):
 
 
 def execute(args):
+    """
+    Args:
+        args[data_store_path] (string): path to store of CMIP netcdf files,
+            with subdirectories for each model (e.g. "CESM2"). Each NetCDF
+            should have coordinates named 'lon', 'lat', 'time'. Filenames
+            should follow this pattern:
+                f"{args['gcm_var']}_day_{gcm_model}_{gcm_experiment}_*.nc"
+
+    """
     LOGGER.info(args)
+    taskgraph_working_dir = os.path.join(args['workspace_dir'], '.taskgraph')
+    graph = taskgraph.TaskGraph(taskgraph_working_dir, -1)
 
     if args['hindcast']:
         target_csv_path = os.path.join(
@@ -443,24 +444,31 @@ def execute(args):
             target_csv_path = os.path.join(
                 args['workspace_dir'],
                 f'downscaled_precip_{gcm_model}_{gcm_experiment}.csv')
-            temp_directory = tempfile.mkdtemp(args['workspace_dir'])
-            temp_netcdf_path = os.path.join(temp_directory, 'mean.nc')
+            temp_netcdf_path = os.path.join(args['workspace_dir'],
+                f"{args['gcm_var']}_day_{gcm_model}_{gcm_experiment}_mean_in_aoi.nc")
             historical_gcm_files = glob.glob(
-                os.path.join(args['data_store_path'], 'GCMs',
-                             f"Amazon__{args['gcm_var']}_day_{gcm_model}_historical_*.nc"))
+                os.path.join(args['data_store_path'], 'GCMs', 'CMIP6', gcm_model,
+                             f"{args['gcm_var']}_day_{gcm_model}_historical_*.nc"))
             future_gcm_files = glob.glob(
-                os.path.join(args['data_store_path'], 'GCMs',
-                             f"Amazon__{args['gcm_var']}_day_{gcm_model}_{gcm_experiment}_*.nc"))
-            if len(historical_gcm_files) > 1 | len(future_gcm_files) > 1:
-                raise ValueError(
-                    f'ambiguous GCM files selected: {historical_gcm_files}, '
-                    f'{future_gcm_files}')
+                os.path.join(args['data_store_path'], 'GCMs', 'CMIP6', gcm_model,
+                             f"{args['gcm_var']}_day_{gcm_model}_{gcm_experiment}_*.nc"))
+            LOGGER.info(
+                f'Subsetting data from GCM datasets: \n'
+                f'{NL.join(historical_gcm_files)} \n'
+                f'{NL.join(future_gcm_files)}')
 
-            with xarray.open_mfdataset(
-                    [historical_gcm_files[0], future_gcm_files[0]]) as mfds:
-                validate(mfds, args['prediction_start_date'],
-                         args['prediction_end_date'])
-                mask_netcdf(mfds, args['aoi_path'], temp_netcdf_path)
+            subset_gcm_task = graph.add_task(
+                func=mask_netcdf,
+                kwargs={
+                    'source_files_list': [*historical_gcm_files, *future_gcm_files],
+                    'aoi_path': args['aoi_path'],
+                    'target_filepath': temp_netcdf_path,
+                },
+                task_name=(
+                    f'Subset global netcdfs by an AOI.'),
+                target_path_list=[temp_netcdf_path],
+                dependent_task_list=[]
+            )
 
             downscale_precipitation(
                 args['observed_precip_path'],
@@ -472,3 +480,4 @@ def execute(args):
                 args['lower_precip_threshold'],
                 args['upper_precip_percentile'],
                 target_csv_path)
+            graph.join()

@@ -1,6 +1,7 @@
 import unittest
 
 import numpy
+import pandas
 import xarray
 
 
@@ -77,21 +78,27 @@ class TestKNN(unittest.TestCase):
         numpy.testing.assert_array_equal(actual_matrix, expected_matrix)
 
     def test_slice_dates_around_dayofyear(self):
-        """"""
+        """Test slicing dates from an xarray.Dataset time coordinate"""
         from .. import knn
 
         dates_index = knn.date_range_no_leap('1979-01-01', '1981-12-31')
+        dataset = xarray.Dataset({'time': dates_index})
         month = 10
         day = 16
-        near_window = 10
+        near_window = 4
+        expected_dates = [
+            '1979-10-12', '1979-10-13', '1979-10-14', '1979-10-15',
+            '1979-10-16', '1979-10-17', '1979-10-18', '1979-10-19', '1979-10-20',
+            '1980-10-12', '1980-10-13', '1980-10-14', '1980-10-15',
+            '1980-10-16', '1980-10-17', '1980-10-18', '1980-10-19', '1980-10-20',
+            '1981-10-12', '1981-10-13', '1981-10-14', '1981-10-15',
+            '1981-10-16', '1981-10-17', '1981-10-18', '1981-10-19', '1981-10-20',
+        ]
         idx = knn.slice_dates_around_dayofyear(
-            dates_index, month, day, near_window)
-
-        # Given the size of the window, and the day, all dates
-        # in the index should be in the same month:
-        self.assertEqual(
-            numpy.count_nonzero(dates_index[idx].month == month),
-            len(idx))
+            dataset.time, month, day, near_window)
+        self.assertListEqual(
+            [d.strftime(format='%Y-%m-%d') for d in dates_index[idx]],
+            expected_dates)
 
     def test_state_transition_series(self):
         """Test create series of state transitions."""
@@ -117,6 +124,7 @@ class TestKNN(unittest.TestCase):
         ref_dates = knn.date_range_no_leap(
             reference_start_date, reference_end_date)
         ref_dates = ref_dates[:n]
+        dataset = xarray.Dataset({'time': ref_dates})
         month = 6
         day = 20
         near_window = 4
@@ -136,7 +144,7 @@ class TestKNN(unittest.TestCase):
             [0.111111, 0.111111, 0.0]
         ])
         jp_matrix = knn.jp_matrix_from_transitions_sequence(
-            ref_dates, transitions, month, day, near_window)
+            dataset.time, transitions, month, day, near_window)
         numpy.testing.assert_array_almost_equal(jp_matrix, expected_matrix)
 
     def test_marginal_probabilities(self):
