@@ -15,6 +15,11 @@ import taskgraph
 import xarray
 
 LOGGER = logging.getLogger(__name__)
+LOG_FMT = (
+    "%(asctime)s "
+    "(%(name)s) "
+    "%(module)s.%(funcName)s(%(lineno)d) "
+    "%(levelname)s %(message)s")
 
 NL = '\n'  # for use in f-strings where \ is not permitted
 DRY = 0  # joint-probability matrices are (3, 3) and index at 0.
@@ -29,41 +34,7 @@ DAYS_IN_YEAR = 365
 NEAR_WINDOW = 15  # days
 EPSILON = 0.1
 KG_M2S_TO_MM = (60 * 60 * 24)  # Kg / (m^2 * s) to mm
-
-
-def rasterize(aoi_path, dataset, fill=0):
-    width = dataset.coords['lon'][1] - dataset.coords['lon'][0]
-    height = dataset.coords['lat'][1] - dataset.coords['lat'][0]
-    width = width.to_numpy()
-    height = height.to_numpy()
-    coords = {
-        'lon': numpy.sort(dataset.coords['lon']),   # W -> E
-        'lat': -numpy.sort(-dataset.coords['lat'])  # N -> S
-    }
-    bbox = pygeoprocessing.get_vector_info(aoi_path)['bounding_box']
-    # expand bbox by one gcm cell on each side, only really necessary
-    # if we rasterize with ALL_TOUCHED=TRUE
-    minx = bbox[0] - width
-    miny = bbox[1] - height
-    maxx = bbox[2] + width
-    maxy = bbox[3] + height
-    dataset = dataset.where(
-        (dataset.lon >= minx) & (dataset.lon <= maxx)
-        & (dataset.lat >= miny) & (dataset.lat <= maxy),
-        drop=True)
-
-    translation = Affine.translation(coords['lon'][0] - width / 2, coords['lat'][-1] - height / 2)
-    scale = Affine.scale(width, height)
-    transform = translation * scale
-    aoi_df = geopandas.read_file(aoi_path)
-    out_shape = (len(coords['lat']), len(coords['lon']))
-    raster = rasterio.features.rasterize(
-        aoi_df.geometry,
-        out_shape=out_shape,
-        fill=fill,
-        transform=transform,
-        dtype=int)
-    return xarray.DataArray(raster, coords=coords, dims=('lat', 'lon'))
+GCM_EXPERIMENT_LIST = ['ssp126', 'ssp245', 'ssp370', 'ssp460', 'ssp585']
 
 
 def shift_longitude_from_360(dataset):
@@ -383,15 +354,60 @@ def downscale_precipitation(
     LOGGER.info(f'Simulation complete. Created file: {target_csv_path}')
 
 
-def mask_netcdf(source_files_list, aoi_path, target_filepath):
+def rasterize_aoi(aoi_path, gcm_path, target_filepath, fill=0):
+    LOGGER.info('rasterizing AOI')
+    # TODO: in order to accomodate an AOI that crosses 180 deg longitude,
+    # it might be best to shift the AOI coordinates to 0:360, rather than
+    # shifting the GCM to -180:180.
+    with xarray.open_dataset(gcm_path) as dataset:
+        dataset = shift_longitude_from_360(dataset)
+        # Sort lat from N to S because the Affine transform
+        # assumes [row 0, col 0] maps to the upper-left pixel.
+        # Later we will flip the rasterized AOI vertically so
+        # it matches the native coordinate order of the GCM (S to N).
+        coords = {
+            'lon': numpy.sort(dataset.coords['lon']),   # W -> E
+            'lat': -numpy.sort(-dataset.coords['lat'])  # N -> S
+        }
+
+    width = coords['lon'][1] - coords['lon'][0]
+    height = coords['lat'][1] - coords['lat'][0]  # should be negative
+    translation = Affine.translation(
+        coords['lon'][0] - width / 2, coords['lat'][0] + numpy.abs(height) / 2)
+    scale = Affine.scale(width, height)
+    transform = translation * scale
+
+    aoi_df = geopandas.read_file(aoi_path)
+    out_shape = (len(coords['lat']), len(coords['lon']))
+    raster = rasterio.features.rasterize(
+        aoi_df.geometry,
+        out_shape=out_shape,
+        fill=fill,
+        transform=transform,
+        dtype=int)
+
+    # Flip vertically to match the coordinate order of the parent dataset
+    da = xarray.DataArray(
+        numpy.flipud(raster),
+        coords={
+            'lon': dataset.coords['lon'],
+            'lat': dataset.coords['lat']
+        },
+        dims=('lat', 'lon'))
+    ds = xarray.Dataset({'aoi': da})
+    ds.to_netcdf(target_filepath)
+
+
+def reduce_netcdf(source_files_list, aoi_netcdf_path, target_filepath):
+    LOGGER.info('averaging GCM values within AOI')
     # TODO: validate that AOI has geographic coordinates
     with xarray.open_mfdataset(source_files_list) as dataset:
         dataset = shift_longitude_from_360(dataset)
-        LOGGER.info('rasterizing AOI')
-        dataset['aoi'] = rasterize(aoi_path, dataset, fill=0)
-        dataset = dataset.where(dataset.aoi == 1, drop=True)
-        dataset = dataset.mean(['lat', 'lon'])
-        dataset.to_netcdf(target_filepath)
+        with xarray.open_dataset(aoi_netcdf_path) as aoi_dataset:
+            dataset['aoi'] = aoi_dataset.aoi
+            dataset = dataset.where(dataset.aoi == 1, drop=True)
+            dataset = dataset.mean(['lat', 'lon'])
+            dataset.to_netcdf(target_filepath)
 
 
 def validate(dataset, prediction_start_date, prediction_end_date):
@@ -440,44 +456,71 @@ def execute(args):
         return None
 
     for gcm_model in args['gcm_model_list']:
+        historical_gcm_files = glob.glob(
+            os.path.join(args['data_store_path'], 'GCMs', 'CMIP6', gcm_model,
+                         f"{args['gcm_var']}_day_{gcm_model}_historical_*.nc"))
+        if len(historical_gcm_files) == 0:
+            LOGGER.info(
+                f'No files found for model: {gcm_model}, experiment: historical'
+                f'skipping model {gcm_model}.')
+            continue
+        temp_aoi_path = os.path.join(
+            args['workspace_dir'], f'aoi_{gcm_model}.nc')
+        rasterize_aoi_task = graph.add_task(
+            func=rasterize_aoi,
+            kwargs={
+                'aoi_path': args['aoi_path'],
+                'gcm_path': historical_gcm_files[0],
+                'target_filepath': temp_aoi_path,
+            },
+            task_name='Rasterize AOI onto the GCM grid.',
+            target_path_list=[temp_aoi_path],
+            dependent_task_list=[]
+        )
         for gcm_experiment in args['gcm_experiment_list']:
+            future_gcm_files = glob.glob(
+                os.path.join(args['data_store_path'], 'GCMs', 'CMIP6', gcm_model,
+                             f"{args['gcm_var']}_day_{gcm_model}_{gcm_experiment}_*.nc"))
+            if len(future_gcm_files) == 0:
+                LOGGER.info(
+                    f'No files found for model: {gcm_model}, experiment: {gcm_experiment}')
+                LOGGER.info(f'skipping experment {gcm_experiment}.')
+                continue
+            LOGGER.info(f'Starting {gcm_model} {gcm_experiment}')
             target_csv_path = os.path.join(
                 args['workspace_dir'],
                 f'downscaled_precip_{gcm_model}_{gcm_experiment}.csv')
             temp_netcdf_path = os.path.join(args['workspace_dir'],
                 f"{args['gcm_var']}_day_{gcm_model}_{gcm_experiment}_mean_in_aoi.nc")
-            historical_gcm_files = glob.glob(
-                os.path.join(args['data_store_path'], 'GCMs', 'CMIP6', gcm_model,
-                             f"{args['gcm_var']}_day_{gcm_model}_historical_*.nc"))
-            future_gcm_files = glob.glob(
-                os.path.join(args['data_store_path'], 'GCMs', 'CMIP6', gcm_model,
-                             f"{args['gcm_var']}_day_{gcm_model}_{gcm_experiment}_*.nc"))
-            LOGGER.info(
-                f'Subsetting data from GCM datasets: \n'
-                f'{NL.join(historical_gcm_files)} \n'
-                f'{NL.join(future_gcm_files)}')
 
-            subset_gcm_task = graph.add_task(
-                func=mask_netcdf,
+            reduce_gcm_task = graph.add_task(
+                func=reduce_netcdf,
                 kwargs={
                     'source_files_list': [*historical_gcm_files, *future_gcm_files],
-                    'aoi_path': args['aoi_path'],
+                    'aoi_netcdf_path': temp_aoi_path,
                     'target_filepath': temp_netcdf_path,
                 },
-                task_name=(
-                    f'Subset global netcdfs by an AOI.'),
+                task_name='Reduce GCM to average value within AOI.',
                 target_path_list=[temp_netcdf_path],
-                dependent_task_list=[]
+                dependent_task_list=[rasterize_aoi_task]
             )
 
-            downscale_precipitation(
-                args['observed_precip_path'],
-                args['prediction_start_date'],
-                args['prediction_end_date'],
-                args['ref_period_start_date'],
-                args['ref_period_end_date'],
-                temp_netcdf_path,
-                args['lower_precip_threshold'],
-                args['upper_precip_percentile'],
-                target_csv_path)
-            graph.join()
+            _ = graph.add_task(
+                func=downscale_precipitation,
+                kwargs={
+                    'observed_data_path': args['observed_precip_path'],
+                    'prediction_start_date': args['prediction_start_date'],
+                    'prediction_end_date': args['prediction_end_date'],
+                    'reference_start_date': args['ref_period_start_date'],
+                    'reference_end_date': args['ref_period_end_date'],
+                    'gcm_netcdf_path': temp_netcdf_path,
+                    'lower_precip_threshold': args['lower_precip_threshold'],
+                    'upper_precip_percentile': args['upper_precip_percentile'],
+                    'target_csv_path': target_csv_path
+                },
+                task_name='Downscale Precipitation',
+                target_path_list=[target_csv_path],
+                dependent_task_list=[reduce_gcm_task]
+            )
+
+    graph.join()

@@ -1,3 +1,4 @@
+from datetime import datetime
 import logging
 import os
 import sys
@@ -13,11 +14,11 @@ args = {
     'ref_period_start_date': '1985-01-01',
     'ref_period_end_date': '2014-12-31',
     'prediction_start_date': '2030-01-01',
-    'prediction_end_date': '2032-01-01',
+    'prediction_end_date': '2060-01-01',
     'hindcast': False,
     'data_store_path': data_store_path,
     'gcm_var': 'pr',
-    'gcm_experiment_list': ['ssp126'],
+    'gcm_experiment_list': knn.GCM_EXPERIMENT_LIST,
     'gcm_model_list': ['CanESM5'],
     'upper_precip_percentile': (75),
     'lower_precip_threshold': 1,  # millimeter
@@ -31,11 +32,16 @@ args = {
 if __name__ == '__main__':
     if not os.path.exists(args['workspace_dir']):
         os.mkdir(args['workspace_dir'])
+    logfile = os.path.join(
+        args['workspace_dir'],
+        f'log_{datetime.now().strftime("%Y-%m-%d--%H_%M_%S")}.txt')
+    formatter = logging.Formatter(knn.LOG_FMT)
+    stream_handler = logging.StreamHandler(sys.stdout)
+    file_handler = logging.FileHandler(logfile)
+    stream_handler.setFormatter(formatter)
+    file_handler.setFormatter(formatter)
     logging.basicConfig(
         level=logging.INFO,
-        handlers=[
-            logging.StreamHandler(sys.stdout),
-            logging.FileHandler(
-                os.path.join(args['workspace_dir'], 'log.txt'))])
+        handlers=[stream_handler, file_handler])
 
     knn.execute(args)
