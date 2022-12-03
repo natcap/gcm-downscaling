@@ -361,14 +361,7 @@ def rasterize_aoi(aoi_path, gcm_path, target_filepath, fill=0):
     # shifting the GCM to -180:180.
     with xarray.open_dataset(gcm_path) as dataset:
         dataset = shift_longitude_from_360(dataset)
-        # Sort lat from N to S because the Affine transform
-        # assumes [row 0, col 0] maps to the upper-left pixel.
-        # Later we will flip the rasterized AOI vertically so
-        # it matches the native coordinate order of the GCM (S to N).
-        coords = {
-            'lon': numpy.sort(dataset.coords['lon']),   # W -> E
-            'lat': -numpy.sort(-dataset.coords['lat'])  # N -> S
-        }
+        coords = dataset.coords
 
     width = coords['lon'][1] - coords['lon'][0]
     height = coords['lat'][1] - coords['lat'][0]  # should be negative
@@ -386,12 +379,11 @@ def rasterize_aoi(aoi_path, gcm_path, target_filepath, fill=0):
         transform=transform,
         dtype=int)
 
-    # Flip vertically to match the coordinate order of the parent dataset
     da = xarray.DataArray(
-        numpy.flipud(raster),
+        raster,
         coords={
-            'lon': dataset.coords['lon'],
-            'lat': dataset.coords['lat']
+            'lon': coords['lon'],
+            'lat': coords['lat']
         },
         dims=('lat', 'lon'))
     ds = xarray.Dataset({'aoi': da})
@@ -437,6 +429,9 @@ def execute(args):
     LOGGER.info(args)
     taskgraph_working_dir = os.path.join(args['workspace_dir'], '.taskgraph')
     graph = taskgraph.TaskGraph(taskgraph_working_dir, -1)
+
+    mswep_store = os.path.join(
+        args['workspace_dir'], 'OBSERVATIONS', 'Global MSWEP2', 'Daily')
 
     if args['hindcast']:
         target_csv_path = os.path.join(
