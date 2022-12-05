@@ -24,9 +24,9 @@ args = {
     'lower_precip_threshold': 1,  # millimeter
     'aoi_path': os.path.join(
         data_store_path, 'OBSERVATIONS/LLdM_AOI2/SHP/Basin_LldM.shp'),
-    'observed_precip_path': os.path.join(
-        data_store_path, 'OBSERVATIONS/LLdM_AOI2/series_pr_diario_regional_average.nc'),
-    'workspace_dir': 'C://Users/dmf/projects/gcm-project/output'
+    # 'observed_precip_path': os.path.join(
+    #     data_store_path, 'OBSERVATIONS/LLdM_AOI2/series_pr_diario_regional_average.nc'),
+    'workspace_dir': 'C://Users/dmf/projects/gcm-project/output_mswep'
 }
 
 if __name__ == '__main__':

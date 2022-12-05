@@ -3,13 +3,13 @@ from datetime import datetime, timedelta
 import glob
 import logging
 import os
+import re
 
 from affine import Affine
 import geopandas
 import numpy
 from numpy.lib.stride_tricks import sliding_window_view
 import pandas
-import pygeoprocessing
 import rasterio
 import taskgraph
 import xarray
@@ -354,12 +354,12 @@ def downscale_precipitation(
     LOGGER.info(f'Simulation complete. Created file: {target_csv_path}')
 
 
-def rasterize_aoi(aoi_path, gcm_path, target_filepath, fill=0):
+def rasterize_aoi(aoi_path, netcdf_path, target_filepath, fill=0):
     LOGGER.info('rasterizing AOI')
     # TODO: in order to accomodate an AOI that crosses 180 deg longitude,
     # it might be best to shift the AOI coordinates to 0:360, rather than
     # shifting the GCM to -180:180.
-    with xarray.open_dataset(gcm_path) as dataset:
+    with xarray.open_dataset(netcdf_path) as dataset:
         dataset = shift_longitude_from_360(dataset)
         coords = dataset.coords
 
@@ -394,6 +394,10 @@ def reduce_netcdf(source_files_list, aoi_netcdf_path, target_filepath):
     LOGGER.info('averaging GCM values within AOI')
     # TODO: validate that AOI has geographic coordinates
     with xarray.open_mfdataset(source_files_list) as dataset:
+        # TODO: this could be optimized by slicing out a date range
+        # first. But since we always need to include the reference period
+        # and the simulation period, it's convenient to just keep the whole
+        # timeseries for now.
         dataset = shift_longitude_from_360(dataset)
         with xarray.open_dataset(aoi_netcdf_path) as aoi_dataset:
             dataset['aoi'] = aoi_dataset.aoi
@@ -430,8 +434,48 @@ def execute(args):
     taskgraph_working_dir = os.path.join(args['workspace_dir'], '.taskgraph')
     graph = taskgraph.TaskGraph(taskgraph_working_dir, -1)
 
+    # MSWEP Files are named as '%Y%j.nc'; https://strftime.org/
     mswep_store = os.path.join(
-        args['workspace_dir'], 'OBSERVATIONS', 'Global MSWEP2', 'Daily')
+        args['data_store_path'], 'OBSERVATIONS', 'Global MSWEP2', 'Daily')
+    # All files from years in the reference period. Don't worry about excluding
+    # extra days if the ref period starts/ends in the middle of a year.
+    mswep_files = [
+        os.path.join(mswep_store, f) for f in os.listdir(mswep_store)
+        if re.search(r'[0-9]{7}\.nc', f)
+        and (int(f[:4]) >= int(args['ref_period_start_date'][:4]))
+        and (int(f[:4]) <= int(args['ref_period_end_date'][:4]))]
+
+    temp_aoi_mswep_path = os.path.join(
+            args['workspace_dir'], 'aoi_mswep.nc')
+    temp_mswep_netcdf_path = os.path.join(
+            args['workspace_dir'], 'mswep_mean.nc')
+
+    # Only the geotransform is needed from the netcdf, which is
+    # the same for all mswep files, so always use the same file for
+    # taskgraph benefits.
+    representative_mswep_path = os.path.join(mswep_store, '1979123.nc')
+    rasterize_aoi_mswep_task = graph.add_task(
+        func=rasterize_aoi,
+        kwargs={
+            'aoi_path': args['aoi_path'],
+            'netcdf_path': representative_mswep_path,
+            'target_filepath': temp_aoi_mswep_path,
+        },
+        task_name='Rasterize AOI onto the GCM grid.',
+        target_path_list=[temp_aoi_mswep_path],
+        dependent_task_list=[]
+    )
+    reduce_mswep_task = graph.add_task(
+        func=reduce_netcdf,
+        kwargs={
+            'source_files_list': mswep_files,
+            'aoi_netcdf_path': temp_aoi_mswep_path,
+            'target_filepath': temp_mswep_netcdf_path,
+        },
+        task_name='Reduce GCM to average value within AOI.',
+        target_path_list=[temp_mswep_netcdf_path],
+        dependent_task_list=[rasterize_aoi_mswep_task]
+    )
 
     if args['hindcast']:
         target_csv_path = os.path.join(
@@ -461,11 +505,11 @@ def execute(args):
             continue
         temp_aoi_path = os.path.join(
             args['workspace_dir'], f'aoi_{gcm_model}.nc')
-        rasterize_aoi_task = graph.add_task(
+        rasterize_aoi_gcm_task = graph.add_task(
             func=rasterize_aoi,
             kwargs={
                 'aoi_path': args['aoi_path'],
-                'gcm_path': historical_gcm_files[0],
+                'netcdf_path': historical_gcm_files[0],
                 'target_filepath': temp_aoi_path,
             },
             task_name='Rasterize AOI onto the GCM grid.',
@@ -476,12 +520,14 @@ def execute(args):
             future_gcm_files = glob.glob(
                 os.path.join(args['data_store_path'], 'GCMs', 'CMIP6', gcm_model,
                              f"{args['gcm_var']}_day_{gcm_model}_{gcm_experiment}_*.nc"))
+
             if len(future_gcm_files) == 0:
                 LOGGER.info(
                     f'No files found for model: {gcm_model}, experiment: {gcm_experiment}')
                 LOGGER.info(f'skipping experment {gcm_experiment}.')
                 continue
             LOGGER.info(f'Starting {gcm_model} {gcm_experiment}')
+
             target_csv_path = os.path.join(
                 args['workspace_dir'],
                 f'downscaled_precip_{gcm_model}_{gcm_experiment}.csv')
@@ -497,13 +543,13 @@ def execute(args):
                 },
                 task_name='Reduce GCM to average value within AOI.',
                 target_path_list=[temp_netcdf_path],
-                dependent_task_list=[rasterize_aoi_task]
+                dependent_task_list=[rasterize_aoi_gcm_task]
             )
 
             _ = graph.add_task(
                 func=downscale_precipitation,
                 kwargs={
-                    'observed_data_path': args['observed_precip_path'],
+                    'observed_data_path': temp_mswep_netcdf_path,
                     'prediction_start_date': args['prediction_start_date'],
                     'prediction_end_date': args['prediction_end_date'],
                     'reference_start_date': args['ref_period_start_date'],
@@ -515,7 +561,7 @@ def execute(args):
                 },
                 task_name='Downscale Precipitation',
                 target_path_list=[target_csv_path],
-                dependent_task_list=[reduce_gcm_task]
+                dependent_task_list=[reduce_gcm_task, reduce_mswep_task]
             )
 
     graph.join()
