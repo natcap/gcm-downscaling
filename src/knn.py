@@ -393,15 +393,19 @@ def rasterize_aoi(aoi_path, netcdf_path, target_filepath, fill=0):
 def reduce_netcdf(source_files_list, aoi_netcdf_path, target_filepath):
     LOGGER.info('averaging GCM values within AOI')
     # TODO: validate that AOI has geographic coordinates
-    with xarray.open_mfdataset(source_files_list) as dataset:
+    # TODO: try smaller lat/lon chunks
+    with xarray.open_mfdataset(source_files_list, parallel=True,
+                               combine='nested', concat_dim='time',
+                               data_vars='minimal', coords='minimal',
+                               compat='override') as dataset:
         # TODO: this could be optimized by slicing out a date range
         # first. But since we always need to include the reference period
         # and the simulation period, it's convenient to just keep the whole
         # timeseries for now.
-        dataset = shift_longitude_from_360(dataset)
         with xarray.open_dataset(aoi_netcdf_path) as aoi_dataset:
             dataset['aoi'] = aoi_dataset.aoi
-            dataset = dataset.where(dataset.aoi == 1, drop=True)
+            # dataset = dataset.where(dataset.aoi == 1, drop=True)
+            dataset = dataset.sel(aoi=1)
             dataset = dataset.mean(['lat', 'lon'])
             dataset.to_netcdf(target_filepath)
 

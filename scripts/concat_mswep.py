@@ -42,3 +42,5 @@ for year in filemap:
         target_path_list=[target_path],
         dependent_task_list=[]
     )
+
+graph.join()
