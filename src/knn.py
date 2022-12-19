@@ -404,8 +404,8 @@ def reduce_netcdf(source_files_list, aoi_netcdf_path, target_filepath):
         # timeseries for now.
         with xarray.open_dataset(aoi_netcdf_path) as aoi_dataset:
             dataset['aoi'] = aoi_dataset.aoi
-            # dataset = dataset.where(dataset.aoi == 1, drop=True)
-            dataset = dataset.sel(aoi=1)
+            dataset = dataset.where(dataset.aoi == 1, drop=True)
+            # dataset = dataset.sel(aoi=1)
             dataset = dataset.mean(['lat', 'lon'])
             dataset.to_netcdf(target_filepath)
 
@@ -439,8 +439,9 @@ def execute(args):
     graph = taskgraph.TaskGraph(taskgraph_working_dir, -1)
 
     # MSWEP Files are named as '%Y%j.nc'; https://strftime.org/
-    mswep_store = os.path.join(
-        args['data_store_path'], 'OBSERVATIONS', 'Global MSWEP2', 'Daily')
+    mswep_store = args['mswep_store_path']
+    # mswep_store = os.path.join(
+    #     args['data_store_path'], 'OBSERVATIONS', 'Global MSWEP2', 'Daily')
     # All files from years in the reference period. Don't worry about excluding
     # extra days if the ref period starts/ends in the middle of a year.
     mswep_files = [
@@ -457,7 +458,7 @@ def execute(args):
     # Only the geotransform is needed from the netcdf, which is
     # the same for all mswep files, so always use the same file for
     # taskgraph benefits.
-    representative_mswep_path = os.path.join(mswep_store, '1979123.nc')
+    representative_mswep_path = os.path.join(mswep_store, '1980.nc')
     rasterize_aoi_mswep_task = graph.add_task(
         func=rasterize_aoi,
         kwargs={

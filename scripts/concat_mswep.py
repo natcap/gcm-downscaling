@@ -14,8 +14,15 @@ def concat_netcdfs(year, target_path):
     file_list = [os.path.join(mswep_store, f) for f in filemap[year]]
     with xarray.open_mfdataset(
             file_list, parallel=True, combine='nested', concat_dim='time',
-            data_vars='minimal', coords='minimal', compat='override') as dataset:
-        dataset.to_netcdf(target_path)
+            data_vars='minimal', coords='minimal', compat='override',
+            autoclose=True) as dataset:
+        dataset.sortby('time')
+        dataset.chunk(chunks={
+            'time': len(dataset.time),
+            'lon': len(dataset.lon) / 10,
+            'lat': len(dataset.lon) / 10
+        })
+        dataset.to_zarr(target_path)
 
 
 workspace_dir = 'C:/Users/dmf/projects/gcm-project/mswep_annual'
@@ -32,7 +39,7 @@ for file in os.listdir(mswep_store):
 del filemap['1979']  # an incomplete year
 
 for year in filemap:
-    target_path = os.path.join(workspace_dir, f'{year}.nc')
+    target_path = os.path.join(workspace_dir, f'{year}_chunk10.zarr')
     graph.add_task(
         func=concat_netcdfs,
         kwargs={

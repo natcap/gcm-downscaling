@@ -17,6 +17,7 @@ args = {
     'prediction_end_date': '2060-01-01',
     'hindcast': False,
     'data_store_path': data_store_path,
+    'mswep_store_path': 'C://Users/dmf/projects/gcm-project/mswep_annual',
     'gcm_var': 'pr',
     'gcm_experiment_list': knn.GCM_EXPERIMENT_LIST,
     'gcm_model_list': ['CanESM5'],
