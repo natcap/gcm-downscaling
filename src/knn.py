@@ -3,13 +3,13 @@ from datetime import datetime, timedelta
 import glob
 import logging
 import os
+import re
 
 from affine import Affine
 import geopandas
 import numpy
 from numpy.lib.stride_tricks import sliding_window_view
 import pandas
-import pygeoprocessing
 import rasterio
 import taskgraph
 import xarray
@@ -354,21 +354,14 @@ def downscale_precipitation(
     LOGGER.info(f'Simulation complete. Created file: {target_csv_path}')
 
 
-def rasterize_aoi(aoi_path, gcm_path, target_filepath, fill=0):
+def rasterize_aoi(aoi_path, netcdf_path, target_filepath, fill=0):
     LOGGER.info('rasterizing AOI')
     # TODO: in order to accomodate an AOI that crosses 180 deg longitude,
     # it might be best to shift the AOI coordinates to 0:360, rather than
     # shifting the GCM to -180:180.
-    with xarray.open_dataset(gcm_path) as dataset:
+    with xarray.open_dataset(netcdf_path) as dataset:
         dataset = shift_longitude_from_360(dataset)
-        # Sort lat from N to S because the Affine transform
-        # assumes [row 0, col 0] maps to the upper-left pixel.
-        # Later we will flip the rasterized AOI vertically so
-        # it matches the native coordinate order of the GCM (S to N).
-        coords = {
-            'lon': numpy.sort(dataset.coords['lon']),   # W -> E
-            'lat': -numpy.sort(-dataset.coords['lat'])  # N -> S
-        }
+        coords = dataset.coords
 
     width = coords['lon'][1] - coords['lon'][0]
     height = coords['lat'][1] - coords['lat'][0]  # should be negative
@@ -386,12 +379,11 @@ def rasterize_aoi(aoi_path, gcm_path, target_filepath, fill=0):
         transform=transform,
         dtype=int)
 
-    # Flip vertically to match the coordinate order of the parent dataset
     da = xarray.DataArray(
-        numpy.flipud(raster),
+        raster,
         coords={
-            'lon': dataset.coords['lon'],
-            'lat': dataset.coords['lat']
+            'lon': coords['lon'],
+            'lat': coords['lat']
         },
         dims=('lat', 'lon'))
     ds = xarray.Dataset({'aoi': da})
@@ -401,11 +393,19 @@ def rasterize_aoi(aoi_path, gcm_path, target_filepath, fill=0):
 def reduce_netcdf(source_files_list, aoi_netcdf_path, target_filepath):
     LOGGER.info('averaging GCM values within AOI')
     # TODO: validate that AOI has geographic coordinates
-    with xarray.open_mfdataset(source_files_list) as dataset:
-        dataset = shift_longitude_from_360(dataset)
+    # TODO: try smaller lat/lon chunks
+    with xarray.open_mfdataset(source_files_list, parallel=True,
+                               combine='nested', concat_dim='time',
+                               data_vars='minimal', coords='minimal',
+                               compat='override') as dataset:
+        # TODO: this could be optimized by slicing out a date range
+        # first. But since we always need to include the reference period
+        # and the simulation period, it's convenient to just keep the whole
+        # timeseries for now.
         with xarray.open_dataset(aoi_netcdf_path) as aoi_dataset:
             dataset['aoi'] = aoi_dataset.aoi
             dataset = dataset.where(dataset.aoi == 1, drop=True)
+            # dataset = dataset.sel(aoi=1)
             dataset = dataset.mean(['lat', 'lon'])
             dataset.to_netcdf(target_filepath)
 
@@ -438,6 +438,50 @@ def execute(args):
     taskgraph_working_dir = os.path.join(args['workspace_dir'], '.taskgraph')
     graph = taskgraph.TaskGraph(taskgraph_working_dir, -1)
 
+    # MSWEP Files are named as '%Y%j.nc'; https://strftime.org/
+    mswep_store = args['mswep_store_path']
+    # mswep_store = os.path.join(
+    #     args['data_store_path'], 'OBSERVATIONS', 'Global MSWEP2', 'Daily')
+    # All files from years in the reference period. Don't worry about excluding
+    # extra days if the ref period starts/ends in the middle of a year.
+    mswep_files = [
+        os.path.join(mswep_store, f) for f in os.listdir(mswep_store)
+        if re.search(r'[0-9]{7}\.nc', f)
+        and (int(f[:4]) >= int(args['ref_period_start_date'][:4]))
+        and (int(f[:4]) <= int(args['ref_period_end_date'][:4]))]
+
+    temp_aoi_mswep_path = os.path.join(
+            args['workspace_dir'], 'aoi_mswep.nc')
+    temp_mswep_netcdf_path = os.path.join(
+            args['workspace_dir'], 'mswep_mean.nc')
+
+    # Only the geotransform is needed from the netcdf, which is
+    # the same for all mswep files, so always use the same file for
+    # taskgraph benefits.
+    representative_mswep_path = os.path.join(mswep_store, '1980.nc')
+    rasterize_aoi_mswep_task = graph.add_task(
+        func=rasterize_aoi,
+        kwargs={
+            'aoi_path': args['aoi_path'],
+            'netcdf_path': representative_mswep_path,
+            'target_filepath': temp_aoi_mswep_path,
+        },
+        task_name='Rasterize AOI onto the GCM grid.',
+        target_path_list=[temp_aoi_mswep_path],
+        dependent_task_list=[]
+    )
+    reduce_mswep_task = graph.add_task(
+        func=reduce_netcdf,
+        kwargs={
+            'source_files_list': mswep_files,
+            'aoi_netcdf_path': temp_aoi_mswep_path,
+            'target_filepath': temp_mswep_netcdf_path,
+        },
+        task_name='Reduce GCM to average value within AOI.',
+        target_path_list=[temp_mswep_netcdf_path],
+        dependent_task_list=[rasterize_aoi_mswep_task]
+    )
+
     if args['hindcast']:
         target_csv_path = os.path.join(
             args['workspace_dir'], 'downscaled_precip_hindcast.csv')
@@ -466,11 +510,11 @@ def execute(args):
             continue
         temp_aoi_path = os.path.join(
             args['workspace_dir'], f'aoi_{gcm_model}.nc')
-        rasterize_aoi_task = graph.add_task(
+        rasterize_aoi_gcm_task = graph.add_task(
             func=rasterize_aoi,
             kwargs={
                 'aoi_path': args['aoi_path'],
-                'gcm_path': historical_gcm_files[0],
+                'netcdf_path': historical_gcm_files[0],
                 'target_filepath': temp_aoi_path,
             },
             task_name='Rasterize AOI onto the GCM grid.',
@@ -481,12 +525,14 @@ def execute(args):
             future_gcm_files = glob.glob(
                 os.path.join(args['data_store_path'], 'GCMs', 'CMIP6', gcm_model,
                              f"{args['gcm_var']}_day_{gcm_model}_{gcm_experiment}_*.nc"))
+
             if len(future_gcm_files) == 0:
                 LOGGER.info(
                     f'No files found for model: {gcm_model}, experiment: {gcm_experiment}')
                 LOGGER.info(f'skipping experment {gcm_experiment}.')
                 continue
             LOGGER.info(f'Starting {gcm_model} {gcm_experiment}')
+
             target_csv_path = os.path.join(
                 args['workspace_dir'],
                 f'downscaled_precip_{gcm_model}_{gcm_experiment}.csv')
@@ -502,13 +548,13 @@ def execute(args):
                 },
                 task_name='Reduce GCM to average value within AOI.',
                 target_path_list=[temp_netcdf_path],
-                dependent_task_list=[rasterize_aoi_task]
+                dependent_task_list=[rasterize_aoi_gcm_task]
             )
 
             _ = graph.add_task(
                 func=downscale_precipitation,
                 kwargs={
-                    'observed_data_path': args['observed_precip_path'],
+                    'observed_data_path': temp_mswep_netcdf_path,
                     'prediction_start_date': args['prediction_start_date'],
                     'prediction_end_date': args['prediction_end_date'],
                     'reference_start_date': args['ref_period_start_date'],
@@ -520,7 +566,7 @@ def execute(args):
                 },
                 task_name='Downscale Precipitation',
                 target_path_list=[target_csv_path],
-                dependent_task_list=[reduce_gcm_task]
+                dependent_task_list=[reduce_gcm_task, reduce_mswep_task]
             )
 
     graph.join()
