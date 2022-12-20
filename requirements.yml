@@ -2,13 +2,21 @@ channels:
 - conda-forge
 - defaults
 dependencies:
+- affine
 - dask
+- gcsfs
+- geopandas
 - ipython
+- jupyter
 - matplotlib
 - netCDF4
 - numpy
 - pandas
+- pyextremes
 - pygeoprocessing
 - pytest
 - rasterio
+- rechunker
+- seaborn
 - xarray
+- zarr
