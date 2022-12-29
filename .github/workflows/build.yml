@@ -2,8 +2,6 @@ name: Build containers
 
 on:
     push:
-        branches:
-            - 'main'
         paths:
             - 'docker/*'
             - '.github/workflows/*.yml'
