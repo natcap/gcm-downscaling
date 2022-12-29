@@ -1,0 +1,66 @@
+name: Build containers
+
+on:
+    push:
+        branches:
+            - 'main'
+        paths:
+            - 'docker/*'
+            - '.github/workflows/*.yml'
+
+concurrency:
+  # make sure only one run of this workflow for a given PR or a given branch
+  # can happen at one time. previous queued or started runs will be cancelled.
+  # github.workflow is the workflow name
+  # github.ref is the ref that triggered the workflow run
+  # on push, this is refs/heads/<branch name>
+  # on pull request, this is refs/pull/<pull request number>/merge
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+    run:
+        shell: bash -l {0}
+
+jobs:
+    build:
+        name: Build containers
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v3
+
+            - name: login to GitHub Container Registry
+              uses: docker/login-action@v1
+              with:
+                  registry: ghcr.io
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Determine version
+              run: echo "DATESTAMP_VERSION=$(date +%F)" >> $GITHUB_ENV
+
+            - name: Build docker
+              run: |
+                  cd docker && docker build \
+                        -t ghcr.io/${{ github.repository_owner }}/gcm-downscaling:latest \
+                        -t ghcr.io/${{ github.repository_owner }}/gcm-downscaling:${{ env.DATESTAMP_VERSION }} \
+                        .
+            - name: Test that knn imports
+              run: |
+                  docker run --rm ghcr.io/${{ github.repository_owner }}/gcm-downscaling:latest python -c "from knn import knn"
+            - name: Push docker
+              run: |
+                  docker push ghcr.io/${{ github.repository_owner }}/gcm-downscaling:latest
+                  docker push ghcr.io/${{ github.repository_owner }}/gcm-downscaling:${{ env.DATESTAMP_VERSION }}
+            - name: Build singularity
+              run: |
+                docker run \
+                    --rm \
+                    --volume $(pwd):/tmp/gcm-downscaling \
+                    --workdir /tmp/gcm-downscaling \
+                    --privileged \
+                    quay.io/singularity/singularity:v3.10.3 pull docker://ghcr.io/${{ github.repository_owner }}/gcm-downscaling:${{ env.DATESTAMP_VERSION }}
+            - uses: actions/upload-artifact@v3
+              with:
+                  path: |
+                      *.sif
