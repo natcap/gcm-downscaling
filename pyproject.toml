@@ -1,0 +1,12 @@
+[project]
+name = "knn"
+
+dynamic = ["version"]
+
+[tool.setuptools_scm]
+version_scheme = "post-release"
+local_scheme = "node-and-date"
+
+[tool.setuptools.packages.find]
+where = ["knn"]
+exclude = ["tests*", "example*"]
