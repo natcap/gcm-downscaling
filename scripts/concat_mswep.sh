@@ -18,7 +18,7 @@ WORKSPACE_DIR="$L_SCRATCH/$WORKSPACE_NAME"
 set -x  # Be eXplicit about what's happening.
 FAILED=0
 singularity run \
-    docker://$CONTAINER concat_mswep.py \
+    docker://$CONTAINER python scripts/concat_mswep.py \
     --n_workers=20 \
 
 # If failed, we want that to be reflected in the email I get on exit.
