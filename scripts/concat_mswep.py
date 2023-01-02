@@ -14,7 +14,7 @@ def concat_netcdfs(year, filemap, target_path):
     print(year)
     file_list = [os.path.join(mswep_store_path, f) for f in filemap[year]]
     with xarray.open_mfdataset(
-            file_list, parallel=True, combine='nested', concat_dim='time',
+            file_list, parallel=False, combine='nested', concat_dim='time',
             data_vars='minimal', coords='minimal', compat='override',
             autoclose=True) as dataset:
         dataset.to_netcdf(target_path)
