@@ -13,6 +13,8 @@ mswep_store_path = '/oak/stanford/groups/gdaily/mswep2'
 def concat_netcdfs(year, filemap, target_path):
     print(year)
     file_list = [os.path.join(mswep_store_path, f) for f in filemap[year]]
+    # parallel=True was causing an OSError from NETCDF4, saying it could not
+    # open the file. I could not reproduce it in a single-threaded environment
     with xarray.open_mfdataset(
             file_list, parallel=False, combine='nested', concat_dim='time',
             data_vars='minimal', coords='minimal', compat='override',

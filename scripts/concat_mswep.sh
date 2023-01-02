@@ -1,9 +1,9 @@
 #!/bin/bash
 #
-#SBATCH --time=2:00:00
+#SBATCH --time=8:00:00
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=20
-#SBATCH --mem-per-cpu=3000M
+#SBATCH --cpus-per-task=40
+#SBATCH --mem-per-cpu=8000M
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=davefisher@stanford.edu
 #SBATCH --partition=hns,normal
