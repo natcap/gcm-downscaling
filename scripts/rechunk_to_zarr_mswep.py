@@ -67,13 +67,14 @@ def main():
     array_plan = rechunker.rechunk(
         dataset,
         target_chunks,
-        str(args.max_mem / 2) + 'GB',  # observed dask actually using 2x max_mem
+        str(args.max_mem) + 'GB',
         target_store,
         temp_store=temp_store)
 
     print(array_plan)
     future = array_plan.persist()
     progress(future)
+    shutil.rmtree(temp_store)
 
 
 if __name__ == '__main__':
