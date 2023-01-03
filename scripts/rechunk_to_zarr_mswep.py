@@ -43,7 +43,7 @@ def main():
             netcdf_files, parallel=True, combine='nested', concat_dim='time',
             data_vars='minimal', coords='minimal', compat='override',
             preprocess=preprocessor, autoclose=True,
-            chunks={'lon': 720, 'lat': 360}) as dataset:
+            chunks={'lon': 360, 'lat': 180}) as dataset:
         # Cannot chunk the concat dim on opening
         dataset = dataset.chunk({'time': dataset.time.size})
 
@@ -67,12 +67,12 @@ def main():
     array_plan = rechunker.rechunk(
         dataset,
         target_chunks,
-        str(args.max_mem) + 'GB',
+        str(args.max_mem / 2) + 'GB',  # observed dask actually using 2x max_mem
         target_store,
         temp_store=temp_store)
 
     print(array_plan)
-    future = array_plan.plan.persist()
+    future = array_plan.execute()
     progress(future)
     shutil.rmtree(temp_store)
 
