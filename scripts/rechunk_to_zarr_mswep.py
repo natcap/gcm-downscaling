@@ -30,14 +30,14 @@ def main():
         '--n_workers', type=int, default=multiprocessing.cpu_count(),
         help='number of workers for Taskgraph.')
     parser.add_argument(
-        '--max_mem', type=str, default='4GB',
-        help='max memory for a dask worker')
+        '--max_mem', type=int, default='4',
+        help='max memory in GB for a dask worker')
     args = parser.parse_args()
 
     client = Client(n_workers=args.n_workers,
                     processes=True,
                     threads_per_worker=1,
-                    memory_limit=args.max_mem)
+                    memory_limit=str(args.max_mem) + 'GB')
 
     with xarray.open_mfdataset(
             netcdf_files, parallel=True, combine='nested', concat_dim='time',
@@ -67,7 +67,7 @@ def main():
     array_plan = rechunker.rechunk(
         dataset,
         target_chunks,
-        args.max_mem / 2,  # I observed dask actually using 2x this value
+        str(args.max_mem / 2) + 'GB',  # observed dask actually using 2x max_mem
         target_store,
         temp_store=temp_store)
 
