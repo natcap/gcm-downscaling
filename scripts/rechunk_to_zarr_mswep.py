@@ -72,7 +72,7 @@ def main():
         temp_store=temp_store)
 
     print(array_plan)
-    future = array_plan.persist()
+    future = array_plan.plan.persist()
     progress(future)
     shutil.rmtree(temp_store)
 
