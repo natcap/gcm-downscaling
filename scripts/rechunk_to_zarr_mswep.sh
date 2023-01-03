@@ -18,5 +18,6 @@ WORKSPACE_DIR="$L_SCRATCH/$WORKSPACE_NAME"
 set -x  # Be eXplicit about what's happening.
 FAILED=0
 singularity run \
-    docker://$CONTAINER python scripts/concat_mswep.py \
+    docker://$CONTAINER python scripts/rechunk_to_zarr_mswep.py \
     --n_workers=10 \
+    --max-mem=20GB
