@@ -52,8 +52,8 @@ def main():
     target_chunks = {
         'precipitation': {
             'time': len(dataset.time),
-            'lon': 360,
-            'lat': 180
+            'lon': 90,
+            'lat': 90
         },
         'time': None,  # don't rechunk these
         'lon': None,
