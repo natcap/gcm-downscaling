@@ -20,4 +20,4 @@ FAILED=0
 singularity run \
     docker://$CONTAINER python scripts/rechunk_to_zarr_mswep.py \
     --n_workers=10 \
-    --max-mem=20GB
+    --max_mem=20GB
