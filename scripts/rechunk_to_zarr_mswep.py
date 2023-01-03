@@ -43,7 +43,7 @@ def main():
             netcdf_files, parallel=True, combine='nested', concat_dim='time',
             data_vars='minimal', coords='minimal', compat='override',
             preprocess=preprocessor, autoclose=True,
-            chunks={'lon': 360, 'lat': 180}) as dataset:
+            chunks={'lon': 360, 'lat': 360}) as dataset:
         # Cannot chunk the concat dim on opening
         dataset = dataset.chunk({'time': dataset.time.size})
 
