@@ -30,7 +30,7 @@ def main():
         '--n_workers', type=int, default=multiprocessing.cpu_count(),
         help='number of workers for Taskgraph.')
     parser.add_argument(
-        '--max_mem', type=int, default='4',
+        '--max_mem', type=int, default=4,
         help='max memory in GB for a dask worker')
     args = parser.parse_args()
 

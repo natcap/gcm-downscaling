@@ -34,7 +34,23 @@ DAYS_IN_YEAR = 365
 NEAR_WINDOW = 15  # days
 EPSILON = 0.1
 KG_M2S_TO_MM = (60 * 60 * 24)  # Kg / (m^2 * s) to mm
+MODEL_LIST = [
+    'CanESM5',
+    'CESM2',
+    'CESM2-WACCM',
+    'CESM-FV2',
+    'CMCC-CM2-HR4',
+    'CMCC-CM2-SR5',
+    'CMCC-CM2-ESM2',
+    'FGOALS-g3',
+    'GFDL-EMS4',
+    'IPSL-CM6A-LR',
+    'MIROC6',
+    'MPI_ESM1-2-LR',
+    # 'MPI_ESM1-2-HR'  # has a bad file with 0 bytes
+]
 GCM_EXPERIMENT_LIST = ['ssp126', 'ssp245', 'ssp370', 'ssp460', 'ssp585']
+GCM_VAR_LIST = ['pr', 'tas']
 
 
 def shift_longitude_from_360(dataset):
