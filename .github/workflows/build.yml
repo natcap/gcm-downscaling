@@ -40,8 +40,7 @@ jobs:
             - name: Build docker
               run: |
                   docker build \
-                      -t ghcr.io/${{ github.repository_owner }}/gcm-downscaling:latest \
-:                      .
+                      -t ghcr.io/${{ github.repository_owner }}/gcm-downscaling:latest .
             - name: Test that knn imports
               run: |
                   docker run --rm ghcr.io/${{ github.repository_owner }}/gcm-downscaling:latest python -c "from knn import knn"
