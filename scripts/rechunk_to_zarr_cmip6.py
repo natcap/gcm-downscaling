@@ -54,7 +54,6 @@ def main():
 
     # if not os.path.exists(zarr_store):
     #     os.mkdir(zarr_store)
-    pprint.pprint(filemap)
 
     def make_zarr(nc_file_list, target_path):
         with xarray.open_mfdataset(
@@ -100,7 +99,8 @@ def main():
 
     # taskgraph_working_dir = os.path.join(zarr_store, '.taskgraph')
     # graph = taskgraph.TaskGraph(taskgraph_working_dir, args.n_workers)
-    # for zarr in filemap:
+    for zarr in filemap:
+        print(zarr, ' : ', len(filemap[zarr]))
     #     target_path = os.path.join(zarr_store, zarr)
     #     graph.add_task(
     #         func=make_zarr,
@@ -115,4 +115,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
