@@ -1,5 +1,5 @@
 import argparse
-import datetime
+from datetime import datetime
 import glob
 import logging
 import os

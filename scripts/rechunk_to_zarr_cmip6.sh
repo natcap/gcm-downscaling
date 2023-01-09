@@ -19,5 +19,5 @@ set -x  # Be eXplicit about what's happening.
 FAILED=0
 singularity run \
     docker://$CONTAINER python scripts/rechunk_to_zarr_cmip6.py \
-    --n_workers=-1 \
-    --max_mem=20
+    --n_workers=32 \
+    --max_mem=7
