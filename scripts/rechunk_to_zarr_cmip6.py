@@ -16,6 +16,53 @@ from knn import knn
 LOGGER = logging.getLogger(__name__)
 
 
+def make_zarr(nc_file_list, target_path, temp_path, max_mem):
+    with xarray.open_mfdataset(
+            nc_file_list, parallel=True, combine='nested', concat_dim='time',
+            data_vars='minimal', coords='minimal', compat='override',
+            autoclose=True, chunks=-1) as dataset:
+        # Cannot chunk the concat dim on opening
+        dataset = dataset.chunk({'time': dataset.time.size})
+
+    LOGGER.info(dataset)
+
+    # I think some GCM grids are ~1deg resolution and some 2-3deg.
+    # size 10 chunks are then 10deg or 20deg chunks, which can
+    # typically contain an entire downscaling AOI. So a likely
+    # worst case is needing to open 4 chunks to extract for an AOI.
+    # And chunks are still only ~50MB for a 150yr timeseries
+    target_chunks = {
+        'precipitation': {
+            'time': len(dataset.time),
+            'lon': 10,
+            'lat': 10
+        },
+        'time': None,  # don't rechunk these
+        'lon': None,
+        'lat': None,
+    }
+
+    if os.path.exists(target_path):
+        shutil.rmtree(target_path)
+    if os.path.exists(temp_path):
+        shutil.rmtree(temp_path)
+    array_plan = rechunker.rechunk(
+        dataset,
+        target_chunks,
+        max_mem,
+        target_path,
+        temp_store=temp_path,
+        target_options={
+            'consolidated': True
+        })
+
+    LOGGER.info(array_plan)
+    future = array_plan.execute()
+    progress(future)
+    shutil.rmtree(temp_path)
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -34,8 +81,14 @@ def main():
     cmip_store = '/oak/stanford/groups/gdaily/cmip6'
     zarr_store = os.path.join(cmip_store, 'zarr')
 
-    filemap = {}
+    if not os.path.exists(zarr_store):
+        os.mkdir(zarr_store)
+
+    taskgraph_working_dir = os.path.join(zarr_store, '.taskgraph')
+    graph = taskgraph.TaskGraph(taskgraph_working_dir, args.n_workers)
     for model in knn.MODEL_LIST:
+        if not os.path.exists(os.path.join(zarr_store, model)):
+            os.mkdir(os.path.join(zarr_store, model))
         for experiment in knn.GCM_EXPERIMENT_LIST:
             for var in knn.GCM_VAR_LIST:
                 nc_files = glob.glob(
@@ -55,76 +108,28 @@ def main():
                     end_dates.append(end)
                 zarr_filename = \
                     f'{var}_day_{model}_{experiment}_{variant}_{grid}_{min(begin_dates)}-{max(end_dates)}.zarr'
-                filemap[zarr_filename] = nc_files
 
-    if not os.path.exists(zarr_store):
-        os.mkdir(zarr_store)
+                LOGGER.info(zarr_filename, ' : ', len(nc_files))
+                target_path = os.path.join(zarr_store, model, zarr_filename)
+                temp_path = os.path.join(
+                    zarr_store, 'temp', os.path.basename(target_path))
+                graph.add_task(
+                    func=make_zarr,
+                    kwargs={
+                        'nc_file_list': nc_files,
+                        'target_path': target_path,
+                        'temp_path': temp_path,
+                        'max_mem': str(args.max_mem / 2) + 'GB',  # observed dask actually using 2x max_mem
+                    },
+                    target_path_list=[target_path],
+                    dependent_task_list=[]
+                )
 
-    def make_zarr(nc_file_list, target_path):
-        with xarray.open_mfdataset(
-                nc_file_list, parallel=True, combine='nested', concat_dim='time',
-                data_vars='minimal', coords='minimal', compat='override',
-                autoclose=True, chunks=-1) as dataset:
-            # Cannot chunk the concat dim on opening
-            dataset = dataset.chunk({'time': dataset.time.size})
-
-        LOGGER.info(dataset)
-
-        temp_store = os.path.join(
-            zarr_store, 'temp', os.path.basename(target_path))
-        # I think some GCM grids are ~1deg resolution and some 2-3deg.
-        # size 10 chunks are then 10deg or 20deg chunks, which can
-        # typically contain an entire downscaling AOI. So a likely
-        # worst case is needing to open 4 chunks to extract for an AOI.
-        # And chunks are still only ~50MB for a 150yr timeseries
-        target_chunks = {
-            'precipitation': {
-                'time': len(dataset.time),
-                'lon': 10,
-                'lat': 10
-            },
-            'time': None,  # don't rechunk these
-            'lon': None,
-            'lat': None,
-        }
-
-        if os.path.exists(target_path):
-            shutil.rmtree(target_path)
-        if os.path.exists(temp_store):
-            shutil.rmtree(temp_store)
-        array_plan = rechunker.rechunk(
-            dataset,
-            target_chunks,
-            str(args.max_mem / 2) + 'GB',  # observed dask actually using 2x max_mem
-            target_path,
-            temp_store=temp_store,
-            target_options={
-                'consolidated': True
-            })
-
-        LOGGER.info(array_plan)
-        future = array_plan.execute()
-        progress(future)
-        shutil.rmtree(temp_store)
-
-    taskgraph_working_dir = os.path.join(zarr_store, '.taskgraph')
-    graph = taskgraph.TaskGraph(taskgraph_working_dir, args.n_workers)
-    for zarr in filemap:
-        LOGGER.info(zarr, ' : ', len(filemap[zarr]))
-        target_path = os.path.join(zarr_store, zarr)
-        graph.add_task(
-            func=make_zarr,
-            kwargs={
-                'nc_file_list': filemap[zarr],
-                'target_path': target_path
-            },
-            target_path_list=[target_path],
-            dependent_task_list=[]
-        )
+    graph.join()
 
 
 if __name__ == '__main__':
-    logfile = f'~/log_{datetime.now().strftime("%Y-%m-%d--%H_%M_%S")}.txt'
+    logfile = f'log_{datetime.now().strftime("%Y-%m-%d--%H_%M_%S")}.txt'
     formatter = logging.Formatter(knn.LOG_FMT)
     stream_handler = logging.StreamHandler(sys.stdout)
     file_handler = logging.FileHandler(logfile)
