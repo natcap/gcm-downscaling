@@ -41,13 +41,13 @@ MODEL_LIST = [
     'CESM-FV2',
     'CMCC-CM2-HR4',
     'CMCC-CM2-SR5',
-    'CMCC-CM2-ESM2',
+    'CMCC-ESM2',
     'FGOALS-g3',
     'GFDL-EMS4',
     'IPSL-CM6A-LR',
     'MIROC6',
-    'MPI_ESM1-2-LR',
-    # 'MPI_ESM1-2-HR'  # has a bad file with 0 bytes
+    'MPI-ESM1-2-LR',
+    # 'MPI-ESM1-2-HR'  # has a bad file with 0 bytes
 ]
 GCM_EXPERIMENT_LIST = [
     'historical',
