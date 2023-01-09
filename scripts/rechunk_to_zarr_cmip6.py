@@ -109,7 +109,7 @@ def main():
                 zarr_filename = \
                     f'{var}_day_{model}_{experiment}_{variant}_{grid}_{min(begin_dates)}-{max(end_dates)}.zarr'
 
-                LOGGER.info(zarr_filename, ' : ', len(nc_files))
+                LOGGER.info(f'{zarr_filename}: {len(nc_files)}')
                 target_path = os.path.join(zarr_store, model, zarr_filename)
                 temp_path = os.path.join(
                     zarr_store, 'temp', os.path.basename(target_path))
