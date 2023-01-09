@@ -1,14 +1,19 @@
 import argparse
+import datetime
 import glob
+import logging
 import os
-import pprint
 import shutil
+import sys
 
 from dask.distributed import Client, progress
 import rechunker
+import taskgraph
 import xarray
 
 from knn import knn
+
+LOGGER = logging.getLogger(__name__)
 
 
 def main():
@@ -52,8 +57,8 @@ def main():
                     f'{var}_day_{model}_{experiment}_{variant}_{grid}_{min(begin_dates)}-{max(end_dates)}.zarr'
                 filemap[zarr_filename] = nc_files
 
-    # if not os.path.exists(zarr_store):
-    #     os.mkdir(zarr_store)
+    if not os.path.exists(zarr_store):
+        os.mkdir(zarr_store)
 
     def make_zarr(nc_file_list, target_path):
         with xarray.open_mfdataset(
@@ -63,9 +68,11 @@ def main():
             # Cannot chunk the concat dim on opening
             dataset = dataset.chunk({'time': dataset.time.size})
 
+        LOGGER.info(dataset)
+
         temp_store = os.path.join(
             zarr_store, 'temp', os.path.basename(target_path))
-        # I think some GCM grids are 1deg resolution and some 2deg.
+        # I think some GCM grids are ~1deg resolution and some 2-3deg.
         # size 10 chunks are then 10deg or 20deg chunks, which can
         # typically contain an entire downscaling AOI. So a likely
         # worst case is needing to open 4 chunks to extract for an AOI.
@@ -90,28 +97,40 @@ def main():
             target_chunks,
             str(args.max_mem / 2) + 'GB',  # observed dask actually using 2x max_mem
             target_path,
-            temp_store=temp_store)
+            temp_store=temp_store,
+            target_options={
+                'consolidated': True
+            })
 
-        print(array_plan)
+        LOGGER.info(array_plan)
         future = array_plan.execute()
         progress(future)
         shutil.rmtree(temp_store)
 
-    # taskgraph_working_dir = os.path.join(zarr_store, '.taskgraph')
-    # graph = taskgraph.TaskGraph(taskgraph_working_dir, args.n_workers)
+    taskgraph_working_dir = os.path.join(zarr_store, '.taskgraph')
+    graph = taskgraph.TaskGraph(taskgraph_working_dir, args.n_workers)
     for zarr in filemap:
-        print(zarr, ' : ', len(filemap[zarr]))
-    #     target_path = os.path.join(zarr_store, zarr)
-    #     graph.add_task(
-    #         func=make_zarr,
-    #         kwargs={
-    #             'nc_file_list': filemap[zarr],
-    #             'target_path': target_path
-    #         },
-    #         target_path_list=[target_path],
-    #         dependent_task_list=[]
-    #     )
+        LOGGER.info(zarr, ' : ', len(filemap[zarr]))
+        target_path = os.path.join(zarr_store, zarr)
+        graph.add_task(
+            func=make_zarr,
+            kwargs={
+                'nc_file_list': filemap[zarr],
+                'target_path': target_path
+            },
+            target_path_list=[target_path],
+            dependent_task_list=[]
+        )
 
 
 if __name__ == '__main__':
+    logfile = f'~/log_{datetime.now().strftime("%Y-%m-%d--%H_%M_%S")}.txt'
+    formatter = logging.Formatter(knn.LOG_FMT)
+    stream_handler = logging.StreamHandler(sys.stdout)
+    file_handler = logging.FileHandler(logfile)
+    stream_handler.setFormatter(formatter)
+    file_handler.setFormatter(formatter)
+    logging.basicConfig(
+        level=logging.INFO,
+        handlers=[stream_handler, file_handler])
     main()
