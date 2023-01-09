@@ -47,7 +47,6 @@ jobs:
             - name: Push docker
               run: |
                   docker push ghcr.io/${{ github.repository_owner }}/gcm-downscaling:latest
-                  docker push ghcr.io/${{ github.repository_owner }}/gcm-downscaling:${{ env.DATESTAMP_VERSION }}
             - name: Build singularity
               run: |
                 docker run \
@@ -55,7 +54,7 @@ jobs:
                     --volume $(pwd):/tmp/gcm-downscaling \
                     --workdir /tmp/gcm-downscaling \
                     --privileged \
-                    quay.io/singularity/singularity:v3.10.3 pull docker://ghcr.io/${{ github.repository_owner }}/gcm-downscaling:${{ env.DATESTAMP_VERSION }}
+                    quay.io/singularity/singularity:v3.10.3 pull docker://ghcr.io/${{ github.repository_owner }}/gcm-downscaling:latest
             - uses: actions/upload-artifact@v3
               with:
                   path: |
