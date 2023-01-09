@@ -1,8 +1,7 @@
 import argparse
 import glob
-import multiprocessing
 import os
-import re
+import pprint
 import shutil
 
 from dask.distributed import Client, progress
@@ -55,7 +54,7 @@ def main():
 
     # if not os.path.exists(zarr_store):
     #     os.mkdir(zarr_store)
-    print(filemap)
+    pprint.pprint(filemap)
 
     def make_zarr(nc_file_list, target_path):
         with xarray.open_mfdataset(
