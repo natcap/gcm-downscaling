@@ -49,7 +49,15 @@ MODEL_LIST = [
     'MPI_ESM1-2-LR',
     # 'MPI_ESM1-2-HR'  # has a bad file with 0 bytes
 ]
-GCM_EXPERIMENT_LIST = ['ssp126', 'ssp245', 'ssp370', 'ssp460', 'ssp585']
+GCM_EXPERIMENT_LIST = [
+    'historical',
+    'ssp119',
+    'ssp126',
+    'ssp245',
+    'ssp370',
+    'ssp460',
+    'ssp585'
+]
 GCM_VAR_LIST = ['pr', 'tas']
 
 
