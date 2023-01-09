@@ -38,9 +38,9 @@ def main():
                     os.path.join(
                         cmip_store, model,
                         f'{var}_day_{model}_{experiment}_*.nc'))
-                print(os.path.exists(cmip_store))
-                print(os.path.exists(os.path.join(cmip_store, model)))
-                print(nc_files)
+                if not nc_files:
+                    # not all experiments exist for all models
+                    continue
                 begin_dates = []
                 end_dates = []
                 for ncf in nc_files:
