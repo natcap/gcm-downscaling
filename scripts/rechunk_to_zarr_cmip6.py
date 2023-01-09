@@ -9,7 +9,7 @@ from dask.distributed import Client, progress
 import rechunker
 import xarray
 
-import knn
+from knn import knn
 
 
 def main():
@@ -27,8 +27,7 @@ def main():
                     threads_per_worker=1,
                     memory_limit=str(args.max_mem) + 'GB')
 
-    # cmip_store = '/oak/stanford/groups/gdaily/cmip6'
-    cmip_store = 'H://Shared drives/GCM_Climate_Tool/required_files/GCMs/CMIP6'
+    cmip_store = '/oak/stanford/groups/gdaily/cmip6'
     zarr_store = os.path.join(cmip_store, 'zarr')
 
     filemap = {}
@@ -36,8 +35,9 @@ def main():
         for experiment in knn.GCM_EXPERIMENT_LIST:
             for var in knn.GCM_VAR_LIST:
                 nc_files = glob.glob(
-                    os.path.join(cmip_store),
-                    model, f'{var}_day_{model}_{experiment}_*.nc')
+                    os.path.join(
+                        cmip_store, model,
+                        f'{var}_day_{model}_{experiment}_*.nc'))
                 begin_dates = []
                 end_dates = []
                 for ncf in nc_files:
