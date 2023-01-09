@@ -15,7 +15,7 @@ from knn import knn
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        '--n_workers', type=int, default=multiprocessing.cpu_count(),
+        '--n_workers', type=int, default=-1,
         help='number of workers for Taskgraph.')
     parser.add_argument(
         '--max_mem', type=int, default=4,
@@ -38,6 +38,9 @@ def main():
                     os.path.join(
                         cmip_store, model,
                         f'{var}_day_{model}_{experiment}_*.nc'))
+                print(os.path.exists(cmip_store))
+                print(os.path.exists(os.path.join(cmip_store, model)))
+                print(nc_files)
                 begin_dates = []
                 end_dates = []
                 for ncf in nc_files:

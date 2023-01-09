@@ -27,7 +27,7 @@ def preprocessor(ds):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        '--n_workers', type=int, default=multiprocessing.cpu_count(),
+        '--n_workers', type=int, default=-1,
         help='number of workers for Taskgraph.')
     parser.add_argument(
         '--max_mem', type=int, default=4,
