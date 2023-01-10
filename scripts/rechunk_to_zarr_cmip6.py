@@ -15,7 +15,7 @@ from knn import knn
 LOGGER = logging.getLogger(__name__)
 
 
-def make_zarr(nc_file_list, target_path, temp_path, max_mem):
+def make_zarr(nc_file_list, target_path, temp_path, gcm_var, max_mem):
     with xarray.open_mfdataset(
             nc_file_list, parallel=False, combine='nested', concat_dim='time',
             data_vars='minimal', coords='minimal', compat='override',
@@ -31,7 +31,7 @@ def make_zarr(nc_file_list, target_path, temp_path, max_mem):
         # worst case is needing to open 4 chunks to extract for an AOI.
         # And chunks are still only ~50MB for a 150yr timeseries
         target_chunks = {
-            'precipitation': {
+            gcm_var: {
                 'time': len(dataset.time),
                 'lon': 10,
                 'lat': 10
@@ -111,6 +111,7 @@ def main():
                         'nc_file_list': nc_files,
                         'target_path': target_path,
                         'temp_path': temp_path,
+                        'gcm_var': var,
                         'max_mem': str(args.max_mem / 2) + 'GB',  # observed dask actually using 2x max_mem
                     },
                     target_path_list=[target_path],
