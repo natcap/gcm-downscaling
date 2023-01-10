@@ -44,9 +44,9 @@ MODEL_LIST = [
     'CMCC-ESM2',
     'FGOALS-g3',
     'GFDL-EMS4',
-    'IPSL-CM6A-LR',
     'MIROC6',
     'MPI-ESM1-2-LR',
+    # 'IPSL-CM6A-LR', # unreadable by xarray; https://github.com/h5netcdf/h5netcdf/issues/94
     # 'MPI-ESM1-2-HR'  # has a bad file with 0 bytes
 ]
 GCM_EXPERIMENT_LIST = [
