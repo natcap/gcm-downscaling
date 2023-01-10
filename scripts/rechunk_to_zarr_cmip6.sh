@@ -2,7 +2,7 @@
 #
 #SBATCH --time=2:00:00
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=1
+#SBATCH --cpus-per-task=32
 #SBATCH --mem-per-cpu=7000M
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=davefisher@stanford.edu
@@ -19,5 +19,5 @@ set -x  # Be eXplicit about what's happening.
 FAILED=0
 singularity run \
     docker://$CONTAINER python scripts/rechunk_to_zarr_cmip6.py \
-    --n_workers=-1 \
+    --n_workers=32 \
     --max_mem=7

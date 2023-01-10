@@ -6,7 +6,7 @@ import os
 import shutil
 import sys
 
-from dask.distributed import Client, progress
+from dask.distributed import progress
 import rechunker
 import taskgraph
 import xarray
@@ -66,17 +66,12 @@ def make_zarr(nc_file_list, target_path, temp_path, max_mem):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        '--n_workers', type=int, default=1,
+        '--n_workers', type=int, default=-1,
         help='number of workers for Taskgraph.')
     parser.add_argument(
         '--max_mem', type=int, default=4,
         help='max memory in GB for a dask worker')
     args = parser.parse_args()
-
-    client = Client(n_workers=abs(args.n_workers),
-                    processes=True,
-                    threads_per_worker=1,
-                    memory_limit=str(args.max_mem) + 'GB')
 
     cmip_store = '/oak/stanford/groups/gdaily/cmip6'
     zarr_store = os.path.join(cmip_store, 'zarr')
