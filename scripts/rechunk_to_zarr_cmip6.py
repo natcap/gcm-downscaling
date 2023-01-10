@@ -66,7 +66,7 @@ def make_zarr(nc_file_list, target_path, temp_path, max_mem):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        '--n_workers', type=int, default=-1,
+        '--n_workers', type=int, default=1,
         help='number of workers for Taskgraph.')
     parser.add_argument(
         '--max_mem', type=int, default=4,
