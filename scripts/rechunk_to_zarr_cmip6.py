@@ -17,7 +17,7 @@ LOGGER = logging.getLogger(__name__)
 
 def make_zarr(nc_file_list, target_path, temp_path, max_mem):
     with xarray.open_mfdataset(
-            nc_file_list, parallel=True, combine='nested', concat_dim='time',
+            nc_file_list, parallel=False, combine='nested', concat_dim='time',
             data_vars='minimal', coords='minimal', compat='override',
             autoclose=True, chunks=-1) as dataset:
         # Cannot chunk the concat dim on opening
