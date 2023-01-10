@@ -6,7 +6,6 @@ import os
 import shutil
 import sys
 
-from dask.distributed import progress
 import rechunker
 import taskgraph
 import xarray
@@ -57,9 +56,7 @@ def make_zarr(nc_file_list, target_path, temp_path, max_mem):
         })
 
     LOGGER.info(array_plan)
-    future = array_plan.execute()
-    progress(future)
-    shutil.rmtree(temp_path)
+    array_plan.execute()
     return None
 
 
@@ -121,6 +118,7 @@ def main():
                 )
 
     graph.join()
+    shutil.rmtree(os.path.join(zarr_store, 'temp'))
 
 
 if __name__ == '__main__':
