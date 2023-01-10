@@ -47,34 +47,34 @@ def main():
         # Cannot chunk the concat dim on opening
         dataset = dataset.chunk({'time': dataset.time.size})
 
-    target_store = os.path.join(zarr_store, 'mswep_1980_2020.zarr')
-    temp_store = os.path.join(zarr_store, 'temp', 'chunking.zarr')
-    target_chunks = {
-        'precipitation': {
-            'time': len(dataset.time),
-            'lon': 90,
-            'lat': 90
-        },
-        'time': None,  # don't rechunk these
-        'lon': None,
-        'lat': None,
-    }
+        target_store = os.path.join(zarr_store, 'mswep_1980_2020.zarr')
+        temp_store = os.path.join(zarr_store, 'temp', 'chunking.zarr')
+        target_chunks = {
+            'precipitation': {
+                'time': len(dataset.time),
+                'lon': 90,
+                'lat': 90
+            },
+            'time': None,  # don't rechunk these
+            'lon': None,
+            'lat': None,
+        }
 
-    if os.path.exists(target_store):
-        shutil.rmtree(target_store)
-    if os.path.exists(temp_store):
+        if os.path.exists(target_store):
+            shutil.rmtree(target_store)
+        if os.path.exists(temp_store):
+            shutil.rmtree(temp_store)
+        array_plan = rechunker.rechunk(
+            dataset,
+            target_chunks,
+            str(args.max_mem / 2) + 'GB',  # observed dask actually using 2x max_mem
+            target_store,
+            temp_store=temp_store)
+
+        print(array_plan)
+        future = array_plan.execute()
+        progress(future)
         shutil.rmtree(temp_store)
-    array_plan = rechunker.rechunk(
-        dataset,
-        target_chunks,
-        str(args.max_mem / 2) + 'GB',  # observed dask actually using 2x max_mem
-        target_store,
-        temp_store=temp_store)
-
-    print(array_plan)
-    future = array_plan.execute()
-    progress(future)
-    shutil.rmtree(temp_store)
 
 
 if __name__ == '__main__':

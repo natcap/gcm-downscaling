@@ -23,41 +23,41 @@ def make_zarr(nc_file_list, target_path, temp_path, max_mem):
         # Cannot chunk the concat dim on opening
         dataset = dataset.chunk({'time': dataset.time.size})
 
-    LOGGER.info(dataset)
+        LOGGER.info(dataset)
 
-    # I think some GCM grids are ~1deg resolution and some 2-3deg.
-    # size 10 chunks are then 10deg or 20deg chunks, which can
-    # typically contain an entire downscaling AOI. So a likely
-    # worst case is needing to open 4 chunks to extract for an AOI.
-    # And chunks are still only ~50MB for a 150yr timeseries
-    target_chunks = {
-        'precipitation': {
-            'time': len(dataset.time),
-            'lon': 10,
-            'lat': 10
-        },
-        'time': None,  # don't rechunk these
-        'lon': None,
-        'lat': None,
-    }
+        # I think some GCM grids are ~1deg resolution and some 2-3deg.
+        # size 10 chunks are then 10deg or 20deg chunks, which can
+        # typically contain an entire downscaling AOI. So a likely
+        # worst case is needing to open 4 chunks to extract for an AOI.
+        # And chunks are still only ~50MB for a 150yr timeseries
+        target_chunks = {
+            'precipitation': {
+                'time': len(dataset.time),
+                'lon': 10,
+                'lat': 10
+            },
+            'time': None,  # don't rechunk these
+            'lon': None,
+            'lat': None,
+        }
 
-    if os.path.exists(target_path):
-        shutil.rmtree(target_path)
-    if os.path.exists(temp_path):
-        shutil.rmtree(temp_path)
-    array_plan = rechunker.rechunk(
-        dataset,
-        target_chunks,
-        max_mem,
-        target_path,
-        temp_store=temp_path,
-        target_options={
-            'consolidated': True
-        })
+        if os.path.exists(target_path):
+            shutil.rmtree(target_path)
+        if os.path.exists(temp_path):
+            shutil.rmtree(temp_path)
+        array_plan = rechunker.rechunk(
+            dataset,
+            target_chunks,
+            max_mem,
+            target_path,
+            temp_store=temp_path,
+            target_options={
+                'consolidated': True
+            })
 
-    LOGGER.info(array_plan)
-    array_plan.execute()
-    return None
+        LOGGER.info(array_plan)
+        array_plan.execute()
+        return None
 
 
 def main():
