@@ -73,7 +73,7 @@ def main():
         help='max memory in GB for a dask worker')
     args = parser.parse_args()
 
-    client = Client(n_workers=args.n_workers,
+    client = Client(n_workers=abs(args.n_workers),
                     processes=True,
                     threads_per_worker=1,
                     memory_limit=str(args.max_mem) + 'GB')
