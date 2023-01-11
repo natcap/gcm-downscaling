@@ -485,14 +485,14 @@ def execute(args):
     """
     LOGGER.info(args)
     taskgraph_working_dir = os.path.join(args['workspace_dir'], '.taskgraph')
-    graph = taskgraph.TaskGraph(taskgraph_working_dir, -1)
+    graph = taskgraph.TaskGraph(taskgraph_working_dir, args['n_workers'])
+    intermediate_dir = os.path.join(args['workspace_dir'], 'intermediate')
+    if not os.path.exists(intermediate_dir):
+        os.mkdir(intermediate_dir)
 
-    mswep_extract_path = os.path.join(
-        args['workspace_dir'], 'bbox_mswep.nc')
-    aoi_masked_mswep_path = os.path.join(
-            args['workspace_dir'], 'aoi_mswep.nc')
-    mswep_netcdf_path = os.path.join(
-            args['workspace_dir'], 'mswep_mean.nc')
+    mswep_extract_path = os.path.join(intermediate_dir, 'extracted_mswep.nc')
+    aoi_masked_mswep_path = os.path.join(intermediate_dir, 'masked_mswep.nc')
+    mswep_netcdf_path = os.path.join(intermediate_dir, 'mswep_mean.nc')
 
     extract_mswep_task = graph.add_task(
         func=extract_from_zarr,
@@ -506,10 +506,7 @@ def execute(args):
         target_path_list=[mswep_extract_path],
         dependent_task_list=[]
     )
-    # Only the geotransform is needed from the netcdf, which is
-    # the same for all mswep files, so always use the same file for
-    # taskgraph benefits.
-    # representative_mswep_path = os.path.join(mswep_store, '1980.nc')
+
     rasterize_aoi_mswep_task = graph.add_task(
         func=rasterize_aoi,
         kwargs={
@@ -538,16 +535,16 @@ def execute(args):
             args['workspace_dir'], 'downscaled_precip_hindcast.csv')
         temp_netcdf_path = None
         downscale_precipitation(
-                mswep_netcdf_path,
-                args['prediction_start_date'],
-                args['prediction_end_date'],
-                args['ref_period_start_date'],
-                args['ref_period_end_date'],
-                temp_netcdf_path,
-                args['lower_precip_threshold'],
-                args['upper_precip_percentile'],
-                target_csv_path,
-                hindcast=True)
+            mswep_netcdf_path,
+            args['prediction_start_date'],
+            args['prediction_end_date'],
+            args['ref_period_start_date'],
+            args['ref_period_end_date'],
+            temp_netcdf_path,
+            args['lower_precip_threshold'],
+            args['upper_precip_percentile'],
+            target_csv_path,
+            hindcast=True)
         return None
 
     for gcm_model in args['gcm_model_list']:
@@ -567,7 +564,7 @@ def execute(args):
             continue
 
         gcm_historical_extract_path = os.path.join(
-            args['workspace_dir'], f'bbox_{gcm_model}_historical.nc')
+            intermediate_dir, f'extracted_{gcm_model}_historical.nc')
         extract_historical_gcm_task = graph.add_task(
             func=extract_from_zarr,
             kwargs={
@@ -582,7 +579,7 @@ def execute(args):
         )
 
         aoi_masked_gcm_path = os.path.join(
-            args['workspace_dir'], f'aoi_{gcm_model}.nc')
+            intermediate_dir, f'masked_{gcm_model}.nc')
         rasterize_aoi_gcm_task = graph.add_task(
             func=rasterize_aoi,
             kwargs={
@@ -615,8 +612,9 @@ def execute(args):
             target_csv_path = os.path.join(
                 args['workspace_dir'],
                 f'downscaled_precip_{gcm_model}_{gcm_experiment}.csv')
-            gcm_netcdf_path = os.path.join(args['workspace_dir'],
-                f"{args['gcm_var']}_day_{gcm_model}_{gcm_experiment}_mean_in_aoi.nc")
+            gcm_netcdf_path = os.path.join(
+                intermediate_dir,
+                f"{args['gcm_var']}_day_{gcm_model}_{gcm_experiment}_mean.nc")
 
             gcm_future_extract_path = os.path.join(
                 args['workspace_dir'], f'bbox_{gcm_model}_{gcm_experiment}.nc')
