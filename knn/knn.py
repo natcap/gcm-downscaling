@@ -59,6 +59,7 @@ GCM_EXPERIMENT_LIST = [
 ]
 GCM_VAR_LIST = ['pr', 'tas']
 MSWEP_STORE_PATH = 'gcs://natcap-climate-data/mswep_1980_2020.zarr'
+MSWEP_VAR = 'precipitation'
 GCSFS = gcsfs.GCSFileSystem(project='natcap-servers')
 GCM_PREFIX = 'natcap-climate-data/cmip6'
 
@@ -266,17 +267,18 @@ def downscale_precipitation(
         LOGGER.info(
             f'computing observed JP matrices for reference period '
             f'{reference_start_date} : {reference_end_date}')
+        obs_dataset = obs_dataset.sortby('time')
         obs_reference_period_ds = obs_dataset.sel(
                 time=slice(reference_start_date, reference_end_date))
         lower_bound_obs = lower_precip_threshold
         upper_bound_obs = numpy.percentile(
-            obs_reference_period_ds.pr.values, q=upper_precip_percentile)
+            obs_reference_period_ds[MSWEP_VAR].values, q=upper_precip_percentile)
         LOGGER.info(
             f'Threshold precip values used for observational record: '
             f'Lower bound: {lower_bound_obs}, '
             f'Upper Bound: {upper_bound_obs}')
         transitions_array_obs = state_transition_series(
-            obs_reference_period_ds.pr.values,
+            obs_reference_period_ds[MSWEP_VAR].values,
             lower_bound_obs, upper_bound_obs)
         historic_obs_jp_matrix_lookup = compute_historical_jp_matrices(
             transitions_array_obs, obs_reference_period_ds.time)
@@ -321,7 +323,7 @@ def downscale_precipitation(
         # TODO: don't need to re-determine this here, we know the wetstate
         # because we chose it deliberately. Though having this revealed
         # a bug in our indexing....
-        precip = obs_reference_period_ds.sel(time=a_date).pr.values
+        precip = obs_reference_period_ds.sel(time=a_date)[MSWEP_VAR].values
         current_wet_state = WET
         if precip <= lower_bound_obs:
             current_wet_state = DRY
@@ -376,7 +378,7 @@ def downscale_precipitation(
         # the current day's precip?
         neighbors = obs_reference_period_ds.isel(time=window_idx[valid_mask])
         inverse_distances = 1 / (
-            numpy.abs(neighbors.pr.values - precip) + EPSILON)
+            numpy.abs(neighbors[MSWEP_VAR].values - precip) + EPSILON)
         weights = inverse_distances / inverse_distances.sum()
         nearest = numpy.random.choice(window_idx[valid_mask], p=weights)
         # we want the day after the nearest-neighbor date. But it's not safe
@@ -426,15 +428,14 @@ def rasterize_aoi(aoi_path, netcdf_path, target_filepath, fill=0):
     ds.to_netcdf(target_filepath)
 
 
-def reduce_netcdf(source_file_list, target_filepath, aoi_netcdf_path=None):
+def reduce_netcdf(source_file_list, target_filepath, aoi_netcdf_path):
     LOGGER.info(f'averaging {source_file_list} values within AOI')
     with xarray.open_mfdataset(source_file_list,
                                combine='nested', concat_dim='time',
                                data_vars='minimal', coords='minimal',
                                compat='override') as dataset:
-        if aoi_netcdf_path:
-            with xarray.open_dataset(aoi_netcdf_path) as aoi_dataset:
-                dataset['aoi'] = aoi_dataset.aoi
+        with xarray.open_dataset(aoi_netcdf_path) as aoi_dataset:
+            dataset['aoi'] = aoi_dataset.aoi
         dataset = dataset.where(dataset.aoi == 1, drop=True)
         dataset = dataset.mean(['lat', 'lon'])
         dataset.to_netcdf(target_filepath)
@@ -523,7 +524,7 @@ def execute(args):
     reduce_mswep_task = graph.add_task(
         func=reduce_netcdf,
         kwargs={
-            'source_file_list': [aoi_mask_mswep_path],
+            'source_file_list': [mswep_extract_path],
             'target_filepath': mswep_netcdf_path,
             'aoi_netcdf_path': aoi_mask_mswep_path
         },
