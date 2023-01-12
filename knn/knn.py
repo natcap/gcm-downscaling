@@ -66,8 +66,8 @@ GCM_STORE_PATH = 'gcs://natcap-climate-data/cmip6'
 # Chunk sizes used to create the zarr stores
 # See scripts/rechunk_to_zarr_*.py
 MSWEP_ZARR_CHUNKS = {
-    'lon': 360,
-    'lat': 360,
+    'lon': 90,
+    'lat': 90,
     'time': -1
 }
 CMIP_ZARR_CHUNKS = {
@@ -395,7 +395,7 @@ def downscale_precipitation(
 
 
 def rasterize_aoi(aoi_path, netcdf_path, target_filepath, fill=0):
-    LOGGER.info('rasterizing AOI')
+    LOGGER.info(f'rasterizing AOI onto {netcdf_path}')
     # TODO: in order to accomodate an AOI that crosses 180 deg longitude,
     # it might be best to shift the AOI coordinates to 0:360, rather than
     # shifting the GCM to -180:180.
@@ -445,8 +445,9 @@ def reduce_netcdf(source_file_list, target_filepath, aoi_netcdf_path=None):
 
 
 def extract_from_zarr(zarr_path, aoi_path, target_path, open_chunks=-1):
+    LOGGER.info(f'extracting data from {zarr_path}')
     # TODO: validate aoi has geographic coords
-    minx, maxx, miny, maxy = pygeoprocessing.get_vector_info(
+    minx, miny, maxx, maxy = pygeoprocessing.get_vector_info(
         aoi_path)['bounding_box']
     with xarray.open_dataset(zarr_path,
                              engine='zarr',
@@ -491,15 +492,15 @@ def execute(args):
         os.mkdir(intermediate_dir)
 
     mswep_extract_path = os.path.join(intermediate_dir, 'extracted_mswep.nc')
-    aoi_masked_mswep_path = os.path.join(intermediate_dir, 'masked_mswep.nc')
+    aoi_mask_mswep_path = os.path.join(intermediate_dir, 'aoi_mask_mswep.nc')
     mswep_netcdf_path = os.path.join(intermediate_dir, 'mswep_mean.nc')
 
     extract_mswep_task = graph.add_task(
         func=extract_from_zarr,
         kwargs={
+            'zarr_path': MSWEP_STORE_PATH,
             'aoi_path': args['aoi_path'],
-            'mswep_store_path': MSWEP_STORE_PATH,
-            'target_filepath': mswep_extract_path,
+            'target_path': mswep_extract_path,
             'open_chunks': MSWEP_ZARR_CHUNKS,
         },
         task_name='Extract MSWEP data by bounding box',
@@ -512,18 +513,19 @@ def execute(args):
         kwargs={
             'aoi_path': args['aoi_path'],
             'netcdf_path': mswep_extract_path,
-            'target_filepath': aoi_masked_mswep_path,
+            'target_filepath': aoi_mask_mswep_path,
         },
         task_name='Rasterize AOI onto the GCM grid.',
-        target_path_list=[aoi_masked_mswep_path],
+        target_path_list=[aoi_mask_mswep_path],
         dependent_task_list=[extract_mswep_task]
     )
 
     reduce_mswep_task = graph.add_task(
         func=reduce_netcdf,
         kwargs={
-            'source_file_list': [aoi_masked_mswep_path],
+            'source_file_list': [aoi_mask_mswep_path],
             'target_filepath': mswep_netcdf_path,
+            'aoi_netcdf_path': aoi_mask_mswep_path
         },
         task_name='Reduce MSWEP to average value within AOI.',
         target_path_list=[mswep_netcdf_path],
@@ -568,9 +570,9 @@ def execute(args):
         extract_historical_gcm_task = graph.add_task(
             func=extract_from_zarr,
             kwargs={
-                'aoi_path': args['aoi_path'],
                 'zarr_path': historical_gcm_files[0],
-                'target_filepath': gcm_historical_extract_path,
+                'aoi_path': args['aoi_path'],
+                'target_path': gcm_historical_extract_path,
                 'open_chunks': CMIP_ZARR_CHUNKS
             },
             task_name='Extract GCM historical data by bounding box',
@@ -578,17 +580,17 @@ def execute(args):
             dependent_task_list=[]
         )
 
-        aoi_masked_gcm_path = os.path.join(
-            intermediate_dir, f'masked_{gcm_model}.nc')
+        aoi_mask_gcm_path = os.path.join(
+            intermediate_dir, f'aoi_mask_{gcm_model}.nc')
         rasterize_aoi_gcm_task = graph.add_task(
             func=rasterize_aoi,
             kwargs={
                 'aoi_path': args['aoi_path'],
                 'netcdf_path': gcm_historical_extract_path,
-                'target_filepath': aoi_masked_gcm_path,
+                'target_filepath': aoi_mask_gcm_path,
             },
             task_name='Rasterize AOI onto the GCM grid.',
-            target_path_list=[aoi_masked_gcm_path],
+            target_path_list=[aoi_mask_gcm_path],
             dependent_task_list=[extract_historical_gcm_task]
         )
         for gcm_experiment in args['gcm_experiment_list']:
@@ -621,9 +623,9 @@ def execute(args):
             extract_future_gcm_task = graph.add_task(
                 func=extract_from_zarr,
                 kwargs={
-                    'aoi_path': args['aoi_path'],
                     'zarr_path': future_gcm_files[0],
-                    'target_filepath': gcm_future_extract_path,
+                    'aoi_path': args['aoi_path'],
+                    'target_path': gcm_future_extract_path,
                     'open_chunks': CMIP_ZARR_CHUNKS
                 },
                 task_name='Extract GCM future data by bounding box',
@@ -636,7 +638,7 @@ def execute(args):
                 kwargs={
                     'source_files_list': [
                         gcm_historical_extract_path, gcm_future_extract_path],
-                    'aoi_netcdf_path': aoi_masked_gcm_path,
+                    'aoi_netcdf_path': aoi_mask_gcm_path,
                     'target_filepath': gcm_netcdf_path,
                 },
                 task_name='Reduce GCM to average value within AOI.',
