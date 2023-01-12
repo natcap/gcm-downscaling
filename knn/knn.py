@@ -1,11 +1,10 @@
 from collections import defaultdict
 from datetime import datetime, timedelta
-import glob
 import logging
 import os
-import re
 
 from affine import Affine
+import gcsfs
 import geopandas
 import numpy
 from numpy.lib.stride_tricks import sliding_window_view
@@ -51,7 +50,6 @@ MODEL_LIST = [
     # 'MPI-ESM1-2-HR'  # has a bad file with 0 bytes
 ]
 GCM_EXPERIMENT_LIST = [
-    'historical',
     'ssp119',
     'ssp126',
     'ssp245',
@@ -61,7 +59,8 @@ GCM_EXPERIMENT_LIST = [
 ]
 GCM_VAR_LIST = ['pr', 'tas']
 MSWEP_STORE_PATH = 'gcs://natcap-climate-data/mswep_1980_2020.zarr'
-GCM_STORE_PATH = 'gcs://natcap-climate-data/cmip6'
+GCSFS = gcsfs.GCSFileSystem(project='natcap-servers')
+GCM_PREFIX = 'natcap-climate-data/cmip6'
 
 # Chunk sizes used to create the zarr stores
 # See scripts/rechunk_to_zarr_*.py
@@ -396,11 +395,8 @@ def downscale_precipitation(
 
 def rasterize_aoi(aoi_path, netcdf_path, target_filepath, fill=0):
     LOGGER.info(f'rasterizing AOI onto {netcdf_path}')
-    # TODO: in order to accomodate an AOI that crosses 180 deg longitude,
-    # it might be best to shift the AOI coordinates to 0:360, rather than
-    # shifting the GCM to -180:180.
     with xarray.open_dataset(netcdf_path) as dataset:
-        dataset = shift_longitude_from_360(dataset)
+        # dataset = shift_longitude_from_360(dataset)
         coords = dataset.coords
 
     width = coords['lon'][1] - coords['lon'][0]
@@ -452,6 +448,10 @@ def extract_from_zarr(zarr_path, aoi_path, target_path, open_chunks=-1):
     with xarray.open_dataset(zarr_path,
                              engine='zarr',
                              chunks=open_chunks) as dataset:
+        # TODO: in order to accomodate an AOI that crosses 180 deg longitude,
+        # it might be best to shift the AOI coordinates to 0:360, rather than
+        # shifting the GCM to -180:180.
+        dataset = shift_longitude_from_360(dataset)
         dataset = dataset.where(
             (dataset.lon >= minx)
             & (dataset.lon <= maxx)
@@ -550,9 +550,8 @@ def execute(args):
         return None
 
     for gcm_model in args['gcm_model_list']:
-        historical_gcm_files = glob.glob(
-            os.path.join(GCM_STORE_PATH, gcm_model,
-                         f"{args['gcm_var']}_day_{gcm_model}_historical_*.zarr"))
+        historical_gcm_files = GCSFS.glob(
+            f"{GCM_PREFIX}/{gcm_model}/{args['gcm_var']}_day_{gcm_model}_historical_*.zarr/")
         if len(historical_gcm_files) == 0:
             LOGGER.warning(
                 f'No files found for model: {gcm_model}, experiment: historical'
@@ -570,7 +569,7 @@ def execute(args):
         extract_historical_gcm_task = graph.add_task(
             func=extract_from_zarr,
             kwargs={
-                'zarr_path': historical_gcm_files[0],
+                'zarr_path': f'gcs://{historical_gcm_files[0]}',
                 'aoi_path': args['aoi_path'],
                 'target_path': gcm_historical_extract_path,
                 'open_chunks': CMIP_ZARR_CHUNKS
@@ -594,9 +593,8 @@ def execute(args):
             dependent_task_list=[extract_historical_gcm_task]
         )
         for gcm_experiment in args['gcm_experiment_list']:
-            future_gcm_files = glob.glob(
-                os.path.join(GCM_STORE_PATH, gcm_model,
-                             f"{args['gcm_var']}_day_{gcm_model}_{gcm_experiment}_*.zarr"))
+            future_gcm_files = GCSFS.glob(
+                f"{GCM_PREFIX}/{gcm_model}/{args['gcm_var']}_day_{gcm_model}_{gcm_experiment}_*.zarr/")
 
             if len(future_gcm_files) == 0:
                 LOGGER.warning(
@@ -619,11 +617,11 @@ def execute(args):
                 f"{args['gcm_var']}_day_{gcm_model}_{gcm_experiment}_mean.nc")
 
             gcm_future_extract_path = os.path.join(
-                args['workspace_dir'], f'bbox_{gcm_model}_{gcm_experiment}.nc')
+                intermediate_dir, f'extracted_{gcm_model}_{gcm_experiment}.nc')
             extract_future_gcm_task = graph.add_task(
                 func=extract_from_zarr,
                 kwargs={
-                    'zarr_path': future_gcm_files[0],
+                    'zarr_path': f'gcs://{future_gcm_files[0]}',
                     'aoi_path': args['aoi_path'],
                     'target_path': gcm_future_extract_path,
                     'open_chunks': CMIP_ZARR_CHUNKS
@@ -636,7 +634,7 @@ def execute(args):
             reduce_gcm_task = graph.add_task(
                 func=reduce_netcdf,
                 kwargs={
-                    'source_files_list': [
+                    'source_file_list': [
                         gcm_historical_extract_path, gcm_future_extract_path],
                     'aoi_netcdf_path': aoi_mask_gcm_path,
                     'target_filepath': gcm_netcdf_path,

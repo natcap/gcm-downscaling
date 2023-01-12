@@ -81,7 +81,7 @@ def main():
     for model in knn.MODEL_LIST:
         if not os.path.exists(os.path.join(zarr_store, model)):
             os.mkdir(os.path.join(zarr_store, model))
-        for experiment in knn.GCM_EXPERIMENT_LIST:
+        for experiment in knn.GCM_EXPERIMENT_LIST + ['historical']:
             for var in knn.GCM_VAR_LIST:
                 nc_files = glob.glob(
                     os.path.join(
