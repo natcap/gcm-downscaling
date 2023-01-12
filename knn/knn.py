@@ -291,6 +291,7 @@ def downscale_precipitation(
         historic_gcm_jp_matrix_lookup = historic_obs_jp_matrix_lookup
     else:
         with xarray.open_dataset(gcm_netcdf_path, use_cftime=True) as gcm_dataset:
+            gcm_dataset = gcm_dataset.sortby('time')
             validate(gcm_dataset, prediction_start_date, prediction_end_date)
             LOGGER.info(
                 f'computing GCM JP matrices for reference period '
