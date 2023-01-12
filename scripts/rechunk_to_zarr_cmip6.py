@@ -9,6 +9,7 @@ import sys
 import rechunker
 import taskgraph
 import xarray
+from zarr.convenience import consolidate_metadata
 
 from knn import knn
 
@@ -78,6 +79,7 @@ def main():
 
     taskgraph_working_dir = os.path.join(zarr_store, '.taskgraph')
     graph = taskgraph.TaskGraph(taskgraph_working_dir, args.n_workers)
+    task_dict = {}
     for model in knn.MODEL_LIST:
         if not os.path.exists(os.path.join(zarr_store, model)):
             os.mkdir(os.path.join(zarr_store, model))
@@ -105,7 +107,7 @@ def main():
                 target_path = os.path.join(zarr_store, model, zarr_filename)
                 temp_path = os.path.join(
                     zarr_store, 'temp', os.path.basename(target_path))
-                graph.add_task(
+                task_dict[zarr_filename] = graph.add_task(
                     func=make_zarr,
                     kwargs={
                         'nc_file_list': nc_files,
@@ -116,6 +118,12 @@ def main():
                     },
                     target_path_list=[target_path],
                     dependent_task_list=[]
+                )
+                graph.add_task(
+                    func=consolidate_metadata,
+                    args=[target_path],
+                    target_path_list=[os.path.join(target_path, '.zmetadata')],
+                    dependent_task_list=[task_dict[zarr_filename]]
                 )
 
     graph.join()

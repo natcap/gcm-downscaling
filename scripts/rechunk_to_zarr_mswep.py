@@ -1,5 +1,4 @@
 import argparse
-import multiprocessing
 import os
 import re
 import shutil
@@ -7,6 +6,7 @@ import shutil
 from dask.distributed import Client, progress
 import rechunker
 import xarray
+from zarr.convenience import consolidate_metadata
 
 
 mswep_store = '/oak/stanford/groups/gdaily/mswep2/annual'
@@ -75,6 +75,7 @@ def main():
         future = array_plan.execute()
         progress(future)
         shutil.rmtree(temp_store)
+        consolidate_metadata(target_store)
 
 
 if __name__ == '__main__':
