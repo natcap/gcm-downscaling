@@ -1,53 +1,62 @@
+import argparse
 from collections import defaultdict
+import multiprocessing
 import os
 import re
 
 import taskgraph
 import xarray
 
-data_store_path = 'H://Shared drives/GCM_Climate_Tool/required_files'
-mswep_store = os.path.join(data_store_path, 'OBSERVATIONS', 'Global MSWEP2', 'Daily')
+mswep_store_path = '/oak/stanford/groups/gdaily/mswep2'
 
 
-def concat_netcdfs(year, target_path):
+def concat_netcdfs(year, filemap, target_path):
     print(year)
-    file_list = [os.path.join(mswep_store, f) for f in filemap[year]]
+    file_list = [os.path.join(mswep_store_path, f) for f in filemap[year]]
+    # parallel=True was causing an OSError from NETCDF4, saying it could not
+    # open the file. I could not reproduce it in a single-threaded environment
     with xarray.open_mfdataset(
-            file_list, parallel=True, combine='nested', concat_dim='time',
+            file_list, parallel=False, combine='nested', concat_dim='time',
             data_vars='minimal', coords='minimal', compat='override',
             autoclose=True) as dataset:
-        dataset.sortby('time')
-        dataset.chunk(chunks={
-            'time': len(dataset.time),
-            'lon': len(dataset.lon) / 10,
-            'lat': len(dataset.lon) / 10
-        })
-        dataset.to_zarr(target_path)
+        dataset.to_netcdf(target_path)
 
 
-workspace_dir = 'C:/Users/dmf/projects/gcm-project/mswep_annual'
-taskgraph_working_dir = os.path.join(workspace_dir, '..', '.taskgraph')
-graph = taskgraph.TaskGraph(taskgraph_working_dir, -1)
-if not os.path.exists(workspace_dir):
-    os.mkdir(workspace_dir)
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        '--n_workers', type=int, default=multiprocessing.cpu_count(),
+        help='number of workers for Taskgraph.')
+    args = parser.parse_args()
 
-filemap = defaultdict(list)
-for file in os.listdir(mswep_store):
-    if re.search(r'[0-9]{7}\.nc', file):
-        year = file[:4]
-        filemap[year].append(file)
-del filemap['1979']  # an incomplete year
+    workspace_dir = os.path.join(mswep_store_path, 'annual')
+    taskgraph_working_dir = os.path.join(mswep_store_path, '.taskgraph')
+    graph = taskgraph.TaskGraph(taskgraph_working_dir, args.n_workers)
+    if not os.path.exists(workspace_dir):
+        os.mkdir(workspace_dir)
 
-for year in filemap:
-    target_path = os.path.join(workspace_dir, f'{year}_chunk10.zarr')
-    graph.add_task(
-        func=concat_netcdfs,
-        kwargs={
-            'year': year,
-            'target_path': target_path
-        },
-        target_path_list=[target_path],
-        dependent_task_list=[]
-    )
+    filemap = defaultdict(list)
+    for file in os.listdir(mswep_store_path):
+        if re.search(r'[0-9]{7}\.nc', file):
+            year = file[:4]
+            filemap[year].append(file)
+    del filemap['1979']  # an incomplete year
 
-graph.join()
+    for year in filemap:
+        target_path = os.path.join(workspace_dir, f'{year}.nc')
+        graph.add_task(
+            func=concat_netcdfs,
+            kwargs={
+                'year': year,
+                'filemap': filemap,
+                'target_path': target_path
+            },
+            target_path_list=[target_path],
+            dependent_task_list=[]
+        )
+
+    graph.join()
+
+
+if __name__ == '__main__':
+    main()

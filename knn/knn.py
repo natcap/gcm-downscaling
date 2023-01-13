@@ -1,15 +1,15 @@
 from collections import defaultdict
 from datetime import datetime, timedelta
-import glob
 import logging
 import os
-import re
 
 from affine import Affine
+import gcsfs
 import geopandas
 import numpy
 from numpy.lib.stride_tricks import sliding_window_view
 import pandas
+import pygeoprocessing
 import rasterio
 import taskgraph
 import xarray
@@ -34,7 +34,47 @@ DAYS_IN_YEAR = 365
 NEAR_WINDOW = 15  # days
 EPSILON = 0.1
 KG_M2S_TO_MM = (60 * 60 * 24)  # Kg / (m^2 * s) to mm
-GCM_EXPERIMENT_LIST = ['ssp126', 'ssp245', 'ssp370', 'ssp460', 'ssp585']
+MODEL_LIST = [
+    'CanESM5',
+    'CESM2',
+    'CESM2-WACCM',
+    'CESM-FV2',
+    'CMCC-CM2-HR4',
+    'CMCC-CM2-SR5',
+    'CMCC-ESM2',
+    'FGOALS-g3',
+    'GFDL-EMS4',
+    'MIROC6',
+    'MPI-ESM1-2-LR',
+    # 'IPSL-CM6A-LR', # unreadable by xarray; https://github.com/h5netcdf/h5netcdf/issues/94
+    # 'MPI-ESM1-2-HR'  # has a bad file with 0 bytes
+]
+GCM_EXPERIMENT_LIST = [
+    'ssp119',
+    'ssp126',
+    'ssp245',
+    'ssp370',
+    'ssp460',
+    'ssp585'
+]
+GCM_VAR_LIST = ['pr', 'tas']
+MSWEP_STORE_PATH = 'gcs://natcap-climate-data/mswep_1980_2020.zarr'
+MSWEP_VAR = 'precipitation'
+GCSFS = gcsfs.GCSFileSystem(project='natcap-servers')
+GCM_PREFIX = 'natcap-climate-data/cmip6'
+
+# Chunk sizes used to create the zarr stores
+# See scripts/rechunk_to_zarr_*.py
+MSWEP_ZARR_CHUNKS = {
+    'lon': 90,
+    'lat': 90,
+    'time': -1
+}
+CMIP_ZARR_CHUNKS = {
+    'lon': 10,
+    'lat': 10,
+    'time': -1
+}
 
 
 def shift_longitude_from_360(dataset):
@@ -227,17 +267,18 @@ def downscale_precipitation(
         LOGGER.info(
             f'computing observed JP matrices for reference period '
             f'{reference_start_date} : {reference_end_date}')
+        obs_dataset = obs_dataset.sortby('time')
         obs_reference_period_ds = obs_dataset.sel(
                 time=slice(reference_start_date, reference_end_date))
         lower_bound_obs = lower_precip_threshold
         upper_bound_obs = numpy.percentile(
-            obs_reference_period_ds.pr.values, q=upper_precip_percentile)
+            obs_reference_period_ds[MSWEP_VAR].values, q=upper_precip_percentile)
         LOGGER.info(
             f'Threshold precip values used for observational record: '
             f'Lower bound: {lower_bound_obs}, '
             f'Upper Bound: {upper_bound_obs}')
         transitions_array_obs = state_transition_series(
-            obs_reference_period_ds.pr.values,
+            obs_reference_period_ds[MSWEP_VAR].values,
             lower_bound_obs, upper_bound_obs)
         historic_obs_jp_matrix_lookup = compute_historical_jp_matrices(
             transitions_array_obs, obs_reference_period_ds.time)
@@ -250,6 +291,7 @@ def downscale_precipitation(
         historic_gcm_jp_matrix_lookup = historic_obs_jp_matrix_lookup
     else:
         with xarray.open_dataset(gcm_netcdf_path, use_cftime=True) as gcm_dataset:
+            gcm_dataset = gcm_dataset.sortby('time')
             validate(gcm_dataset, prediction_start_date, prediction_end_date)
             LOGGER.info(
                 f'computing GCM JP matrices for reference period '
@@ -282,7 +324,7 @@ def downscale_precipitation(
         # TODO: don't need to re-determine this here, we know the wetstate
         # because we chose it deliberately. Though having this revealed
         # a bug in our indexing....
-        precip = obs_reference_period_ds.sel(time=a_date).pr.values
+        precip = obs_reference_period_ds.sel(time=a_date)[MSWEP_VAR].values
         current_wet_state = WET
         if precip <= lower_bound_obs:
             current_wet_state = DRY
@@ -299,7 +341,13 @@ def downscale_precipitation(
         date_offset = timedelta(days=NEAR_WINDOW)
         window_start = sim_date - date_offset
         window_end = sim_date + date_offset
-        array = gcm_dataset.sel(time=slice(window_start, window_end)).pr.values
+        # While most GCM calendars are 365-day "noleap", some are not.
+        # isoformat dates are a universal way to slice into these calendars.
+        # And it's okay if the result includes a leap-day for some models
+        # but not others. https://github.com/natcap/gcm-downscaling/issues/3
+        array = gcm_dataset.sel(
+            time=slice(window_start.isoformat(), window_end.isoformat())
+            ).pr.values
         # TODO: Is it okay for the window to overlap the historical period?
         # This occurs in the first NEAR_WINDOW days of the prediction
         # period.
@@ -337,7 +385,7 @@ def downscale_precipitation(
         # the current day's precip?
         neighbors = obs_reference_period_ds.isel(time=window_idx[valid_mask])
         inverse_distances = 1 / (
-            numpy.abs(neighbors.pr.values - precip) + EPSILON)
+            numpy.abs(neighbors[MSWEP_VAR].values - precip) + EPSILON)
         weights = inverse_distances / inverse_distances.sum()
         nearest = numpy.random.choice(window_idx[valid_mask], p=weights)
         # we want the day after the nearest-neighbor date. But it's not safe
@@ -355,12 +403,9 @@ def downscale_precipitation(
 
 
 def rasterize_aoi(aoi_path, netcdf_path, target_filepath, fill=0):
-    LOGGER.info('rasterizing AOI')
-    # TODO: in order to accomodate an AOI that crosses 180 deg longitude,
-    # it might be best to shift the AOI coordinates to 0:360, rather than
-    # shifting the GCM to -180:180.
+    LOGGER.info(f'rasterizing AOI onto {netcdf_path}')
     with xarray.open_dataset(netcdf_path) as dataset:
-        dataset = shift_longitude_from_360(dataset)
+        # dataset = shift_longitude_from_360(dataset)
         coords = dataset.coords
 
     width = coords['lon'][1] - coords['lon'][0]
@@ -390,24 +435,37 @@ def rasterize_aoi(aoi_path, netcdf_path, target_filepath, fill=0):
     ds.to_netcdf(target_filepath)
 
 
-def reduce_netcdf(source_files_list, aoi_netcdf_path, target_filepath):
-    LOGGER.info('averaging GCM values within AOI')
-    # TODO: validate that AOI has geographic coordinates
-    # TODO: try smaller lat/lon chunks
-    with xarray.open_mfdataset(source_files_list, parallel=True,
+def reduce_netcdf(source_file_list, target_filepath, aoi_netcdf_path):
+    LOGGER.info(f'averaging {source_file_list} values within AOI')
+    with xarray.open_mfdataset(source_file_list,
                                combine='nested', concat_dim='time',
                                data_vars='minimal', coords='minimal',
                                compat='override') as dataset:
-        # TODO: this could be optimized by slicing out a date range
-        # first. But since we always need to include the reference period
-        # and the simulation period, it's convenient to just keep the whole
-        # timeseries for now.
         with xarray.open_dataset(aoi_netcdf_path) as aoi_dataset:
             dataset['aoi'] = aoi_dataset.aoi
-            dataset = dataset.where(dataset.aoi == 1, drop=True)
-            # dataset = dataset.sel(aoi=1)
-            dataset = dataset.mean(['lat', 'lon'])
-            dataset.to_netcdf(target_filepath)
+        dataset = dataset.where(dataset.aoi == 1, drop=True)
+        dataset = dataset.mean(['lat', 'lon'])
+        dataset.to_netcdf(target_filepath)
+
+
+def extract_from_zarr(zarr_path, aoi_path, target_path, open_chunks=-1):
+    LOGGER.info(f'extracting data from {zarr_path}')
+    # TODO: validate aoi has geographic coords
+    minx, miny, maxx, maxy = pygeoprocessing.get_vector_info(
+        aoi_path)['bounding_box']
+    with xarray.open_dataset(zarr_path,
+                             engine='zarr',
+                             chunks=open_chunks) as dataset:
+        # TODO: in order to accomodate an AOI that crosses 180 deg longitude,
+        # it might be best to shift the AOI coordinates to 0:360, rather than
+        # shifting the GCM to -180:180.
+        dataset = shift_longitude_from_360(dataset)
+        dataset = dataset.where(
+            (dataset.lon >= minx)
+            & (dataset.lon <= maxx)
+            & (dataset.lat >= miny)
+            & (dataset.lat <= maxy), drop=True)
+        dataset.to_netcdf(target_path)
 
 
 def validate(dataset, prediction_start_date, prediction_end_date):
@@ -436,49 +494,49 @@ def execute(args):
     """
     LOGGER.info(args)
     taskgraph_working_dir = os.path.join(args['workspace_dir'], '.taskgraph')
-    graph = taskgraph.TaskGraph(taskgraph_working_dir, -1)
+    graph = taskgraph.TaskGraph(taskgraph_working_dir, args['n_workers'])
+    intermediate_dir = os.path.join(args['workspace_dir'], 'intermediate')
+    if not os.path.exists(intermediate_dir):
+        os.mkdir(intermediate_dir)
 
-    # MSWEP Files are named as '%Y%j.nc'; https://strftime.org/
-    mswep_store = args['mswep_store_path']
-    # mswep_store = os.path.join(
-    #     args['data_store_path'], 'OBSERVATIONS', 'Global MSWEP2', 'Daily')
-    # All files from years in the reference period. Don't worry about excluding
-    # extra days if the ref period starts/ends in the middle of a year.
-    mswep_files = [
-        os.path.join(mswep_store, f) for f in os.listdir(mswep_store)
-        if re.search(r'[0-9]{7}\.nc', f)
-        and (int(f[:4]) >= int(args['ref_period_start_date'][:4]))
-        and (int(f[:4]) <= int(args['ref_period_end_date'][:4]))]
+    mswep_extract_path = os.path.join(intermediate_dir, 'extracted_mswep.nc')
+    aoi_mask_mswep_path = os.path.join(intermediate_dir, 'aoi_mask_mswep.nc')
+    mswep_netcdf_path = os.path.join(intermediate_dir, 'mswep_mean.nc')
 
-    temp_aoi_mswep_path = os.path.join(
-            args['workspace_dir'], 'aoi_mswep.nc')
-    temp_mswep_netcdf_path = os.path.join(
-            args['workspace_dir'], 'mswep_mean.nc')
+    extract_mswep_task = graph.add_task(
+        func=extract_from_zarr,
+        kwargs={
+            'zarr_path': MSWEP_STORE_PATH,
+            'aoi_path': args['aoi_path'],
+            'target_path': mswep_extract_path,
+            'open_chunks': MSWEP_ZARR_CHUNKS,
+        },
+        task_name='Extract MSWEP data by bounding box',
+        target_path_list=[mswep_extract_path],
+        dependent_task_list=[]
+    )
 
-    # Only the geotransform is needed from the netcdf, which is
-    # the same for all mswep files, so always use the same file for
-    # taskgraph benefits.
-    representative_mswep_path = os.path.join(mswep_store, '1980.nc')
     rasterize_aoi_mswep_task = graph.add_task(
         func=rasterize_aoi,
         kwargs={
             'aoi_path': args['aoi_path'],
-            'netcdf_path': representative_mswep_path,
-            'target_filepath': temp_aoi_mswep_path,
+            'netcdf_path': mswep_extract_path,
+            'target_filepath': aoi_mask_mswep_path,
         },
         task_name='Rasterize AOI onto the GCM grid.',
-        target_path_list=[temp_aoi_mswep_path],
-        dependent_task_list=[]
+        target_path_list=[aoi_mask_mswep_path],
+        dependent_task_list=[extract_mswep_task]
     )
+
     reduce_mswep_task = graph.add_task(
         func=reduce_netcdf,
         kwargs={
-            'source_files_list': mswep_files,
-            'aoi_netcdf_path': temp_aoi_mswep_path,
-            'target_filepath': temp_mswep_netcdf_path,
+            'source_file_list': [mswep_extract_path],
+            'target_filepath': mswep_netcdf_path,
+            'aoi_netcdf_path': aoi_mask_mswep_path
         },
-        task_name='Reduce GCM to average value within AOI.',
-        target_path_list=[temp_mswep_netcdf_path],
+        task_name='Reduce MSWEP to average value within AOI.',
+        target_path_list=[mswep_netcdf_path],
         dependent_task_list=[rasterize_aoi_mswep_task]
     )
 
@@ -487,79 +545,125 @@ def execute(args):
             args['workspace_dir'], 'downscaled_precip_hindcast.csv')
         temp_netcdf_path = None
         downscale_precipitation(
-                args['observed_precip_path'],
-                args['prediction_start_date'],
-                args['prediction_end_date'],
-                args['ref_period_start_date'],
-                args['ref_period_end_date'],
-                temp_netcdf_path,
-                args['lower_precip_threshold'],
-                args['upper_precip_percentile'],
-                target_csv_path,
-                hindcast=True)
+            mswep_netcdf_path,
+            args['prediction_start_date'],
+            args['prediction_end_date'],
+            args['ref_period_start_date'],
+            args['ref_period_end_date'],
+            temp_netcdf_path,
+            args['lower_precip_threshold'],
+            args['upper_precip_percentile'],
+            target_csv_path,
+            hindcast=True)
         return None
 
     for gcm_model in args['gcm_model_list']:
-        historical_gcm_files = glob.glob(
-            os.path.join(args['data_store_path'], 'GCMs', 'CMIP6', gcm_model,
-                         f"{args['gcm_var']}_day_{gcm_model}_historical_*.nc"))
+        historical_gcm_files = GCSFS.glob(
+            f"{GCM_PREFIX}/{gcm_model}/{args['gcm_var']}_day_{gcm_model}_historical_*.zarr/")
         if len(historical_gcm_files) == 0:
-            LOGGER.info(
+            LOGGER.warning(
                 f'No files found for model: {gcm_model}, experiment: historical'
                 f'skipping model {gcm_model}.')
             continue
-        temp_aoi_path = os.path.join(
-            args['workspace_dir'], f'aoi_{gcm_model}.nc')
+        if len(historical_gcm_files) > 1:
+            LOGGER.warning(
+                f'Ambiguous files found for model: {gcm_model}, experiment: historical'
+                f'Found: {historical_gcm_files}'
+                f'skipping model {gcm_model}.')
+            continue
+
+        gcm_historical_extract_path = os.path.join(
+            intermediate_dir, f'extracted_{gcm_model}_historical.nc')
+        extract_historical_gcm_task = graph.add_task(
+            func=extract_from_zarr,
+            kwargs={
+                'zarr_path': f'gcs://{historical_gcm_files[0]}',
+                'aoi_path': args['aoi_path'],
+                'target_path': gcm_historical_extract_path,
+                'open_chunks': CMIP_ZARR_CHUNKS
+            },
+            task_name='Extract GCM historical data by bounding box',
+            target_path_list=[gcm_historical_extract_path],
+            dependent_task_list=[]
+        )
+
+        aoi_mask_gcm_path = os.path.join(
+            intermediate_dir, f'aoi_mask_{gcm_model}.nc')
         rasterize_aoi_gcm_task = graph.add_task(
             func=rasterize_aoi,
             kwargs={
                 'aoi_path': args['aoi_path'],
-                'netcdf_path': historical_gcm_files[0],
-                'target_filepath': temp_aoi_path,
+                'netcdf_path': gcm_historical_extract_path,
+                'target_filepath': aoi_mask_gcm_path,
             },
             task_name='Rasterize AOI onto the GCM grid.',
-            target_path_list=[temp_aoi_path],
-            dependent_task_list=[]
+            target_path_list=[aoi_mask_gcm_path],
+            dependent_task_list=[extract_historical_gcm_task]
         )
         for gcm_experiment in args['gcm_experiment_list']:
-            future_gcm_files = glob.glob(
-                os.path.join(args['data_store_path'], 'GCMs', 'CMIP6', gcm_model,
-                             f"{args['gcm_var']}_day_{gcm_model}_{gcm_experiment}_*.nc"))
+            future_gcm_files = GCSFS.glob(
+                f"{GCM_PREFIX}/{gcm_model}/{args['gcm_var']}_day_{gcm_model}_{gcm_experiment}_*.zarr/")
 
             if len(future_gcm_files) == 0:
-                LOGGER.info(
-                    f'No files found for model: {gcm_model}, experiment: {gcm_experiment}')
-                LOGGER.info(f'skipping experment {gcm_experiment}.')
+                LOGGER.warning(
+                    f'No files found for model: {gcm_model}, experiment: {gcm_experiment}'
+                    f'skipping experment: {gcm_experiment} - {gcm_model}.')
+                continue
+            if len(future_gcm_files) > 1:
+                LOGGER.warning(
+                    f'Ambiguous files found for model: {gcm_model}, experiment: {gcm_experiment}'
+                    f'Found: {future_gcm_files}'
+                    f'skipping experiment: {gcm_experiment} - {gcm_model}.')
                 continue
             LOGGER.info(f'Starting {gcm_model} {gcm_experiment}')
 
             target_csv_path = os.path.join(
                 args['workspace_dir'],
                 f'downscaled_precip_{gcm_model}_{gcm_experiment}.csv')
-            temp_netcdf_path = os.path.join(args['workspace_dir'],
-                f"{args['gcm_var']}_day_{gcm_model}_{gcm_experiment}_mean_in_aoi.nc")
+            gcm_netcdf_path = os.path.join(
+                intermediate_dir,
+                f"{args['gcm_var']}_day_{gcm_model}_{gcm_experiment}_mean.nc")
+
+            gcm_future_extract_path = os.path.join(
+                intermediate_dir, f'extracted_{gcm_model}_{gcm_experiment}.nc')
+            extract_future_gcm_task = graph.add_task(
+                func=extract_from_zarr,
+                kwargs={
+                    'zarr_path': f'gcs://{future_gcm_files[0]}',
+                    'aoi_path': args['aoi_path'],
+                    'target_path': gcm_future_extract_path,
+                    'open_chunks': CMIP_ZARR_CHUNKS
+                },
+                task_name='Extract GCM future data by bounding box',
+                target_path_list=[gcm_future_extract_path],
+                dependent_task_list=[]
+            )
 
             reduce_gcm_task = graph.add_task(
                 func=reduce_netcdf,
                 kwargs={
-                    'source_files_list': [*historical_gcm_files, *future_gcm_files],
-                    'aoi_netcdf_path': temp_aoi_path,
-                    'target_filepath': temp_netcdf_path,
+                    'source_file_list': [
+                        gcm_historical_extract_path, gcm_future_extract_path],
+                    'aoi_netcdf_path': aoi_mask_gcm_path,
+                    'target_filepath': gcm_netcdf_path,
                 },
                 task_name='Reduce GCM to average value within AOI.',
-                target_path_list=[temp_netcdf_path],
-                dependent_task_list=[rasterize_aoi_gcm_task]
+                target_path_list=[gcm_netcdf_path],
+                dependent_task_list=[
+                    rasterize_aoi_gcm_task,
+                    extract_historical_gcm_task,
+                    extract_future_gcm_task]
             )
 
             _ = graph.add_task(
                 func=downscale_precipitation,
                 kwargs={
-                    'observed_data_path': temp_mswep_netcdf_path,
+                    'observed_data_path': mswep_netcdf_path,
                     'prediction_start_date': args['prediction_start_date'],
                     'prediction_end_date': args['prediction_end_date'],
                     'reference_start_date': args['ref_period_start_date'],
                     'reference_end_date': args['ref_period_end_date'],
-                    'gcm_netcdf_path': temp_netcdf_path,
+                    'gcm_netcdf_path': gcm_netcdf_path,
                     'lower_precip_threshold': args['lower_precip_threshold'],
                     'upper_precip_percentile': args['upper_precip_percentile'],
                     'target_csv_path': target_csv_path
