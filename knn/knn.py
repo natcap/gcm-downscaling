@@ -341,7 +341,13 @@ def downscale_precipitation(
         date_offset = timedelta(days=NEAR_WINDOW)
         window_start = sim_date - date_offset
         window_end = sim_date + date_offset
-        array = gcm_dataset.sel(time=slice(window_start, window_end)).pr.values
+        # While most GCM calendars are 365-day "noleap", some are not.
+        # isoformat dates are a universal way to slice into these calendars.
+        # And it's okay if the result includes a leap-day for some models
+        # but not others. https://github.com/natcap/gcm-downscaling/issues/3
+        array = gcm_dataset.sel(
+            time=slice(window_start.isoformat(), window_end.isoformat())
+            ).pr.values
         # TODO: Is it okay for the window to overlap the historical period?
         # This occurs in the first NEAR_WINDOW days of the prediction
         # period.
