@@ -420,7 +420,7 @@ def downscale_precip(
         da = xarray.DataArray(
             precip_array,
             coords={
-                'time': dates.index.values,
+                'time': dates.date.values,
                 'lon': dataset.lon,
                 'lat': dataset.lat
             },
@@ -726,6 +726,8 @@ def execute(args):
                     'observed_mean_precip_filepath': mswep_netcdf_path,
                     'observed_precip_filepath': mswep_extract_path,
                     'aoi_netcdf_path': aoi_mask_mswep_path,
+                    'reference_start_date': args['ref_period_start_date'],
+                    'reference_end_date': args['ref_period_end_date'],
                     'target_filename': target_pdf_path
                 },
                 task_name='Report',
