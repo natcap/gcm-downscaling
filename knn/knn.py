@@ -14,6 +14,8 @@ import rasterio
 import taskgraph
 import xarray
 
+from . import plot
+
 LOGGER = logging.getLogger(__name__)
 LOG_FMT = (
     "%(asctime)s "
@@ -256,7 +258,7 @@ def compute_historical_jp_matrices(
     return jp_matrix_dict
 
 
-def downscale_precipitation(
+def bootstrap_dates_precip(
         observed_data_path, prediction_start_date, prediction_end_date,
         reference_start_date, reference_end_date, gcm_netcdf_path,
         lower_precip_threshold, upper_precip_percentile, target_csv_path,
@@ -402,6 +404,32 @@ def downscale_precipitation(
     LOGGER.info(f'Simulation complete. Created file: {target_csv_path}')
 
 
+def downscale_precip(
+        bootstrapped_dates_path, gridded_observed_precip,
+        aoi_mask_path, target_netcdf_path):
+    dates = pandas.read_csv(bootstrapped_dates_path, parse_dates={'date': [0]})
+    with xarray.open_dataset(gridded_observed_precip) as dataset:
+        with xarray.open_dataset(aoi_mask_path) as aoi_dataset:
+            dataset['aoi'] = aoi_dataset.aoi
+            dataset = dataset.where(dataset.aoi == 1, drop=True)
+        precip_array = numpy.empty(
+            (len(dates.index), *dataset.precipitation.shape[-2:]))
+        for i, d in enumerate(dates.historic_date):
+            array = dataset.precipitation.sel(time=d)
+            precip_array[i] = array
+        da = xarray.DataArray(
+            precip_array,
+            coords={
+                'time': dates.index.values,
+                'lon': dataset.lon,
+                'lat': dataset.lat
+            },
+            dims=dataset.dims
+        )
+    target_dataset = xarray.Dataset({'precipitation': da})
+    target_dataset.to_netcdf(target_netcdf_path)
+
+
 def rasterize_aoi(aoi_path, netcdf_path, target_filepath, fill=0):
     LOGGER.info(f'rasterizing AOI onto {netcdf_path}')
     with xarray.open_dataset(netcdf_path) as dataset:
@@ -544,7 +572,7 @@ def execute(args):
         target_csv_path = os.path.join(
             args['workspace_dir'], 'downscaled_precip_hindcast.csv')
         temp_netcdf_path = None
-        downscale_precipitation(
+        bootstrap_dates_precip(
             mswep_netcdf_path,
             args['prediction_start_date'],
             args['prediction_end_date'],
@@ -618,12 +646,15 @@ def execute(args):
             LOGGER.info(f'Starting {gcm_model} {gcm_experiment}')
 
             target_csv_path = os.path.join(
+                args['workspace_dir'], intermediate_dir,
+                f'bootstrapped_dates_precip_{gcm_model}_{gcm_experiment}.csv')
+            target_netcdf_path = os.path.join(
                 args['workspace_dir'],
-                f'downscaled_precip_{gcm_model}_{gcm_experiment}.csv')
+                f'downscaled_precip_{gcm_model}_{gcm_experiment}.nc')
+
             gcm_netcdf_path = os.path.join(
                 intermediate_dir,
                 f"{args['gcm_var']}_day_{gcm_model}_{gcm_experiment}_mean.nc")
-
             gcm_future_extract_path = os.path.join(
                 intermediate_dir, f'extracted_{gcm_model}_{gcm_experiment}.nc')
             extract_future_gcm_task = graph.add_task(
@@ -655,8 +686,8 @@ def execute(args):
                     extract_future_gcm_task]
             )
 
-            _ = graph.add_task(
-                func=downscale_precipitation,
+            bootstrap_dates_task = graph.add_task(
+                func=bootstrap_dates_precip,
                 kwargs={
                     'observed_data_path': mswep_netcdf_path,
                     'prediction_start_date': args['prediction_start_date'],
@@ -668,9 +699,38 @@ def execute(args):
                     'upper_precip_percentile': args['upper_precip_percentile'],
                     'target_csv_path': target_csv_path
                 },
-                task_name='Downscale Precipitation',
+                task_name='Bootstrap dates for precipitation',
                 target_path_list=[target_csv_path],
                 dependent_task_list=[reduce_gcm_task, reduce_mswep_task]
+            )
+
+            downscale_precip_task = graph.add_task(
+                func=downscale_precip,
+                kwargs={
+                    'bootstrapped_dates_path': target_csv_path,
+                    'gridded_observed_precip': mswep_extract_path,
+                    'aoi_mask_path': aoi_mask_mswep_path,
+                    'target_netcdf_path': target_netcdf_path
+                },
+                task_name='Downscale Precipitation',
+                target_path_list=[target_netcdf_path],
+                dependent_task_list=[bootstrap_dates_task]
+            )
+
+            target_pdf_path = os.path.splitext(target_netcdf_path)[0] + '.pdf'
+            report_task = graph.add_task(
+                func=plot.plot,
+                kwargs={
+                    'dates_filepath': target_csv_path,
+                    'precip_filepath': target_netcdf_path,
+                    'observed_mean_precip_filepath': mswep_netcdf_path,
+                    'observed_precip_filepath': mswep_extract_path,
+                    'aoi_netcdf_path': aoi_mask_mswep_path,
+                    'target_filename': target_pdf_path
+                },
+                task_name='Report',
+                target_path_list=[target_pdf_path],
+                dependent_task_list=[downscale_precip_task]
             )
 
     graph.join()

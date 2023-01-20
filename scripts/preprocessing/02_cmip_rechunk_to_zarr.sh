@@ -18,6 +18,6 @@ WORKSPACE_DIR="$L_SCRATCH/$WORKSPACE_NAME"
 set -x  # Be eXplicit about what's happening.
 FAILED=0
 singularity run --bind $(pwd)/scripts:/tmp/scripts/ \
-    docker://$CONTAINER python scripts/rechunk_to_zarr_cmip6.py \
+    docker://$CONTAINER python scripts/preprocessing/02_cmip_rechunk_to_zarr.py \
     --n_workers=6 \
     --max_mem=40
