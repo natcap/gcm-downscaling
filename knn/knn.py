@@ -14,6 +14,8 @@ import rasterio
 import taskgraph
 import xarray
 
+from . import plot
+
 LOGGER = logging.getLogger(__name__)
 LOG_FMT = (
     "%(asctime)s "
@@ -713,6 +715,22 @@ def execute(args):
                 task_name='Downscale Precipitation',
                 target_path_list=[target_netcdf_path],
                 dependent_task_list=[bootstrap_dates_task]
+            )
+
+            target_pdf_path = os.path.splitext(target_netcdf_path)[0] + '.pdf'
+            report_task = graph.add_task(
+                func=plot.plot,
+                kwargs={
+                    'dates_filepath': target_csv_path,
+                    'precip_filepath': target_netcdf_path,
+                    'observed_mean_precip_filepath': mswep_netcdf_path,
+                    'observed_precip_filepath': mswep_extract_path,
+                    'aoi_netcdf_path': aoi_mask_mswep_path,
+                    'target_filename': target_pdf_path
+                },
+                task_name='Report',
+                target_path_list=[target_pdf_path],
+                dependent_task_list=[downscale_precip_task]
             )
 
     graph.join()
