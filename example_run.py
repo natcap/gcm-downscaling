@@ -9,9 +9,9 @@ from knn import knn
 args = {
     'ref_period_start_date': '1985-01-01',
     'ref_period_end_date': '2014-12-31',
-    'prediction_start_date': '2030-01-01',
-    'prediction_end_date': '2060-01-01',
-    'hindcast': False,
+    'prediction_start_date': '1980-01-01',
+    'prediction_end_date': '2019-12-31',
+    'hindcast': True,
     'gcm_var': 'pr',
     'gcm_experiment_list': knn.GCM_EXPERIMENT_LIST,
     'gcm_model_list': knn.MODEL_LIST,

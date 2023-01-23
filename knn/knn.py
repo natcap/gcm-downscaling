@@ -59,7 +59,9 @@ GCM_EXPERIMENT_LIST = [
     'ssp460',
     'ssp585'
 ]
-GCM_VAR_LIST = ['pr', 'tas']
+GCM_PRECIP_VAR = 'pr'
+GCM_TEMPERATURE_VAR = 'tas'
+GCM_VAR_LIST = [GCM_PRECIP_VAR, GCM_TEMPERATURE_VAR]
 MSWEP_STORE_PATH = 'gcs://natcap-climate-data/mswep_1980_2020.zarr'
 MSWEP_VAR = 'precipitation'
 GCSFS = gcsfs.GCSFileSystem(project='natcap-servers')
@@ -264,6 +266,7 @@ def bootstrap_dates_precip(
         lower_precip_threshold, upper_precip_percentile, target_csv_path,
         hindcast=False):
     dates_lookup = {}
+    gcm_var = GCM_PRECIP_VAR
 
     with xarray.open_dataset(observed_data_path) as obs_dataset:
         LOGGER.info(
@@ -291,6 +294,7 @@ def bootstrap_dates_precip(
         lower_bound_gcm = lower_bound_obs
         upper_bound_gcm = upper_bound_obs
         historic_gcm_jp_matrix_lookup = historic_obs_jp_matrix_lookup
+        gcm_var = MSWEP_VAR
     else:
         with xarray.open_dataset(gcm_netcdf_path, use_cftime=True) as gcm_dataset:
             gcm_dataset = gcm_dataset.sortby('time')
@@ -302,13 +306,13 @@ def bootstrap_dates_precip(
                 time=slice(reference_start_date, reference_end_date))
             lower_bound_gcm = lower_precip_threshold / KG_M2S_TO_MM
             upper_bound_gcm = numpy.percentile(
-                gcm_reference_period_ds.pr.values, q=upper_precip_percentile)
+                gcm_reference_period_ds[gcm_var].values, q=upper_precip_percentile)
             LOGGER.info(
                 f'Threshold precip values used for GCM record: '
                 f'Lower bound: {lower_bound_gcm}, '
                 f'Upper Bound: {upper_bound_gcm}')
             transitions_array_gcm = state_transition_series(
-                gcm_reference_period_ds.pr.values,
+                gcm_reference_period_ds[gcm_var].values,
                 lower_bound_gcm, upper_bound_gcm)
             historic_gcm_jp_matrix_lookup = compute_historical_jp_matrices(
                 transitions_array_gcm, gcm_reference_period_ds.time)
@@ -349,7 +353,7 @@ def bootstrap_dates_precip(
         # but not others. https://github.com/natcap/gcm-downscaling/issues/3
         array = gcm_dataset.sel(
             time=slice(window_start.isoformat(), window_end.isoformat())
-            ).pr.values
+            )[gcm_var].values
         # TODO: Is it okay for the window to overlap the historical period?
         # This occurs in the first NEAR_WINDOW days of the prediction
         # period.
@@ -583,6 +587,56 @@ def execute(args):
             args['upper_precip_percentile'],
             target_csv_path,
             hindcast=True)
+        bootstrap_dates_task = graph.add_task(
+            func=bootstrap_dates_precip,
+            kwargs={
+                'observed_data_path': mswep_netcdf_path,
+                'prediction_start_date': args['prediction_start_date'],
+                'prediction_end_date': args['prediction_end_date'],
+                'reference_start_date': args['ref_period_start_date'],
+                'reference_end_date': args['ref_period_end_date'],
+                'gcm_netcdf_path': temp_netcdf_path,
+                'lower_precip_threshold': args['lower_precip_threshold'],
+                'upper_precip_percentile': args['upper_precip_percentile'],
+                'target_csv_path': target_csv_path
+            },
+            task_name='Bootstrap dates for precipitation',
+            target_path_list=[target_csv_path],
+            dependent_task_list=[reduce_mswep_task]
+        )
+        target_netcdf_path = os.path.join(
+            args['workspace_dir'], 'downscaled_precip_hindcast.nc')
+        downscale_precip_task = graph.add_task(
+            func=downscale_precip,
+            kwargs={
+                'bootstrapped_dates_path': target_csv_path,
+                'gridded_observed_precip': mswep_extract_path,
+                'aoi_mask_path': aoi_mask_mswep_path,
+                'target_netcdf_path': target_netcdf_path
+            },
+            task_name='Downscale Precipitation',
+            target_path_list=[target_netcdf_path],
+            dependent_task_list=[bootstrap_dates_task]
+        )
+        target_pdf_path = os.path.splitext(target_netcdf_path)[0] + '.pdf'
+        report_task = graph.add_task(
+            func=plot.plot,
+            kwargs={
+                'dates_filepath': target_csv_path,
+                'precip_filepath': target_netcdf_path,
+                'observed_mean_precip_filepath': mswep_netcdf_path,
+                'observed_precip_filepath': mswep_extract_path,
+                'aoi_netcdf_path': aoi_mask_mswep_path,
+                'reference_start_date': args['ref_period_start_date'],
+                'reference_end_date': args['ref_period_end_date'],
+                'target_filename': target_pdf_path
+            },
+            task_name='Report',
+            target_path_list=[target_pdf_path],
+            dependent_task_list=[downscale_precip_task]
+        )
+
+        graph.join()
         return None
 
     for gcm_model in args['gcm_model_list']:
