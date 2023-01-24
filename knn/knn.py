@@ -555,7 +555,7 @@ def execute(args):
             'netcdf_path': mswep_extract_path,
             'target_filepath': aoi_mask_mswep_path,
         },
-        task_name='Rasterize AOI onto the GCM grid.',
+        task_name='Rasterize AOI onto the MSWEP grid.',
         target_path_list=[aoi_mask_mswep_path],
         dependent_task_list=[extract_mswep_task]
     )
@@ -574,19 +574,8 @@ def execute(args):
 
     if args['hindcast']:
         target_csv_path = os.path.join(
-            args['workspace_dir'], 'downscaled_precip_hindcast.csv')
+            intermediate_dir, 'downscaled_precip_hindcast.csv')
         temp_netcdf_path = None
-        bootstrap_dates_precip(
-            mswep_netcdf_path,
-            args['prediction_start_date'],
-            args['prediction_end_date'],
-            args['ref_period_start_date'],
-            args['ref_period_end_date'],
-            temp_netcdf_path,
-            args['lower_precip_threshold'],
-            args['upper_precip_percentile'],
-            target_csv_path,
-            hindcast=True)
         bootstrap_dates_task = graph.add_task(
             func=bootstrap_dates_precip,
             kwargs={
@@ -598,7 +587,8 @@ def execute(args):
                 'gcm_netcdf_path': temp_netcdf_path,
                 'lower_precip_threshold': args['lower_precip_threshold'],
                 'upper_precip_percentile': args['upper_precip_percentile'],
-                'target_csv_path': target_csv_path
+                'target_csv_path': target_csv_path,
+                'hindcast': True
             },
             task_name='Bootstrap dates for precipitation',
             target_path_list=[target_csv_path],
@@ -699,8 +689,7 @@ def execute(args):
                 continue
             LOGGER.info(f'Starting {gcm_model} {gcm_experiment}')
 
-            target_csv_path = os.path.join(
-                args['workspace_dir'], intermediate_dir,
+            target_csv_path = os.path.join(intermediate_dir,
                 f'bootstrapped_dates_precip_{gcm_model}_{gcm_experiment}.csv')
             target_netcdf_path = os.path.join(
                 args['workspace_dir'],
