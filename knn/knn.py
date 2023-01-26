@@ -574,7 +574,7 @@ def execute(args):
 
     if args['hindcast']:
         target_csv_path = os.path.join(
-            intermediate_dir, 'downscaled_precip_hindcast.csv')
+            intermediate_dir, 'bootstrapped_dates_precip_hindcast.csv')
         temp_netcdf_path = None
         bootstrap_dates_task = graph.add_task(
             func=bootstrap_dates_precip,
@@ -619,6 +619,7 @@ def execute(args):
                 'aoi_netcdf_path': aoi_mask_mswep_path,
                 'reference_start_date': args['ref_period_start_date'],
                 'reference_end_date': args['ref_period_end_date'],
+                'hindcast': True,
                 'target_filename': target_pdf_path
             },
             task_name='Report',
@@ -771,6 +772,7 @@ def execute(args):
                     'aoi_netcdf_path': aoi_mask_mswep_path,
                     'reference_start_date': args['ref_period_start_date'],
                     'reference_end_date': args['ref_period_end_date'],
+                    'hindcast': False,
                     'target_filename': target_pdf_path
                 },
                 task_name='Report',
