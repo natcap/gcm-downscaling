@@ -62,13 +62,16 @@ GCM_EXPERIMENT_LIST = [
 GCM_PRECIP_VAR = 'pr'
 GCM_TEMPERATURE_VAR = 'tas'
 GCM_VAR_LIST = [GCM_PRECIP_VAR, GCM_TEMPERATURE_VAR]
+
 MSWEP_STORE_PATH = 'gcs://natcap-climate-data/mswep_1980_2020.zarr'
+MSWEP_DATE_RANGE = ('1980-01-01', '2020-12-31')
 MSWEP_VAR = 'precipitation'
+
 GCSFS = gcsfs.GCSFileSystem(project='natcap-servers')
 GCM_PREFIX = 'natcap-climate-data/cmip6'
 
 # Chunk sizes used to create the zarr stores
-# See scripts/rechunk_to_zarr_*.py
+# See scripts/preprocessing/*rechunk_to_zarr.py
 MSWEP_ZARR_CHUNKS = {
     'lon': 90,
     'lat': 90,
@@ -262,9 +265,9 @@ def compute_historical_jp_matrices(
 
 def bootstrap_dates_precip(
         observed_data_path, prediction_start_date, prediction_end_date,
-        reference_start_date, reference_end_date, gcm_netcdf_path,
+        reference_start_date, reference_end_date,
         lower_precip_threshold, upper_precip_percentile, target_csv_path,
-        hindcast=False):
+        gcm_netcdf_path=None, hindcast=False):
     dates_lookup = {}
     gcm_var = GCM_PRECIP_VAR
 
@@ -573,62 +576,58 @@ def execute(args):
     )
 
     if args['hindcast']:
-        target_csv_path = os.path.join(
+        hindcast_target_csv_path = os.path.join(
             intermediate_dir, 'bootstrapped_dates_precip_hindcast.csv')
-        temp_netcdf_path = None
-        bootstrap_dates_task = graph.add_task(
+        hind_bootstrap_dates_task = graph.add_task(
             func=bootstrap_dates_precip,
             kwargs={
                 'observed_data_path': mswep_netcdf_path,
-                'prediction_start_date': args['prediction_start_date'],
-                'prediction_end_date': args['prediction_end_date'],
+                'prediction_start_date': MSWEP_DATE_RANGE[0],
+                'prediction_end_date': MSWEP_DATE_RANGE[1],
                 'reference_start_date': args['ref_period_start_date'],
                 'reference_end_date': args['ref_period_end_date'],
-                'gcm_netcdf_path': temp_netcdf_path,
                 'lower_precip_threshold': args['lower_precip_threshold'],
                 'upper_precip_percentile': args['upper_precip_percentile'],
-                'target_csv_path': target_csv_path,
+                'target_csv_path': hindcast_target_csv_path,
                 'hindcast': True
             },
             task_name='Bootstrap dates for precipitation',
-            target_path_list=[target_csv_path],
+            target_path_list=[hindcast_target_csv_path],
             dependent_task_list=[reduce_mswep_task]
         )
-        target_netcdf_path = os.path.join(
+        hindcast_target_netcdf_path = os.path.join(
             args['workspace_dir'], 'downscaled_precip_hindcast.nc')
-        downscale_precip_task = graph.add_task(
+        hind_downscale_precip_task = graph.add_task(
             func=downscale_precip,
             kwargs={
-                'bootstrapped_dates_path': target_csv_path,
+                'bootstrapped_dates_path': hindcast_target_csv_path,
                 'gridded_observed_precip': mswep_extract_path,
                 'aoi_mask_path': aoi_mask_mswep_path,
-                'target_netcdf_path': target_netcdf_path
+                'target_netcdf_path': hindcast_target_netcdf_path
             },
             task_name='Downscale Precipitation',
-            target_path_list=[target_netcdf_path],
-            dependent_task_list=[bootstrap_dates_task]
+            target_path_list=[hindcast_target_netcdf_path],
+            dependent_task_list=[hind_bootstrap_dates_task]
         )
-        target_pdf_path = os.path.splitext(target_netcdf_path)[0] + '.pdf'
+        hindcast_target_pdf_path = os.path.splitext(
+            hindcast_target_netcdf_path)[0] + '.pdf'
         report_task = graph.add_task(
             func=plot.plot,
             kwargs={
-                'dates_filepath': target_csv_path,
-                'precip_filepath': target_netcdf_path,
+                'dates_filepath': hindcast_target_csv_path,
+                'precip_filepath': hindcast_target_netcdf_path,
                 'observed_mean_precip_filepath': mswep_netcdf_path,
                 'observed_precip_filepath': mswep_extract_path,
                 'aoi_netcdf_path': aoi_mask_mswep_path,
                 'reference_start_date': args['ref_period_start_date'],
                 'reference_end_date': args['ref_period_end_date'],
                 'hindcast': True,
-                'target_filename': target_pdf_path
+                'target_filename': hindcast_target_pdf_path
             },
             task_name='Report',
-            target_path_list=[target_pdf_path],
-            dependent_task_list=[downscale_precip_task]
+            target_path_list=[hindcast_target_pdf_path],
+            dependent_task_list=[hind_downscale_precip_task]
         )
-
-        graph.join()
-        return None
 
     for gcm_model in args['gcm_model_list']:
         historical_gcm_files = GCSFS.glob(

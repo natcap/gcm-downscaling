@@ -38,8 +38,10 @@ def plot(dates_filepath, precip_filepath, observed_mean_precip_filepath,
             bootstrapped_data, mswep_df,
             left_index=True, right_index=True, how='left')
         data['residual'] = data['python_prediction'] - data['mswep_precip']
+        data_series_list = ['python_prediction', 'mswep_precip']
     else:
         data = bootstrapped_data
+        data_series_list = ['python_prediction']
         # For forecasts, only the reference period of the observed data
         # is relevant
         mswep_df = mswep_df[reference_start_date: reference_end_date]
@@ -48,7 +50,7 @@ def plot(dates_filepath, precip_filepath, observed_mean_precip_filepath,
         fig, axs = plt.subplots(nrows=2, figsize=(12, 6), sharex=True)
         fig.frameon = False
         data.plot(
-            y=['python_prediction', 'mswep_precip'],
+            y=data_series_list,
             linewidth=0.5,
             alpha=0.7,
             ax=axs[0])
@@ -62,8 +64,8 @@ def plot(dates_filepath, precip_filepath, observed_mean_precip_filepath,
                 alpha=0.7,
                 ax=axs[1])
             axs[1].grid(True, axis='y', linestyle='dotted', linewidth=0.1)
-            pdf_pages.savefig()
-            plt.close()
+        pdf_pages.savefig()
+        plt.close()
 
         fig, axs = plt.subplots(ncols=3, figsize=(12, 4), sharey=True)
         fig.frameon = False
@@ -101,7 +103,7 @@ def plot(dates_filepath, precip_filepath, observed_mean_precip_filepath,
 
         data['month'] = data.index.month
         data_long = pandas.melt(
-            data.drop(columns=['residual']), id_vars="month")
+            data[data_series_list + ['month']], id_vars="month")
         nrows = 2
         ncols = 6
         fig, axs = plt.subplots(
