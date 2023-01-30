@@ -13,8 +13,8 @@ args = {
     'gcm_model_list': [knn.MODEL_LIST[0]],
     'upper_precip_percentile': 75,
     'lower_precip_threshold': 1,  # millimeter
-    'aoi_path': 'H://Shared drives/GCM_Climate_Tool/required_files/OBSERVATIONS/LLdM_AOI2/SHP/Basin_LldM.shp',
-    'workspace_dir': 'C://Users/dmf/projects/gcm-project/simple_test_hindcast',
+    'aoi_path': '../lldm_aoi/Basin_LldM.shp',
+    'workspace_dir': '../lldm_aoi/output',
     'n_workers': -1
 }
 

@@ -12,6 +12,7 @@ dependencies:
 - netCDF4
 - numpy
 - pandas
+- pip
 - pyextremes
 - pygeoprocessing
 - pytest
