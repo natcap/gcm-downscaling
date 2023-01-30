@@ -55,7 +55,7 @@ def plot(dates_filepath, precip_filepath, observed_mean_precip_filepath,
     long_df.reset_index(drop=True, inplace=True)
 
     with PdfPages(target_filename) as pdf_pages:
-        fig, axs = plt.subplots(nrows=2, figsize=(12, 6), sharex=True)
+        fig, axs = plt.subplots(nrows=2, figsize=(12, 6), sharex=hindcast)
         data.plot(
             y=data_series_list,
             linewidth=0.5,
@@ -71,39 +71,22 @@ def plot(dates_filepath, precip_filepath, observed_mean_precip_filepath,
                 alpha=0.7,
                 ax=axs[1])
             axs[1].grid(True, axis='y', linestyle='dotted', linewidth=0.1)
+        else:
+            axs[1].axis('off')
         pdf_pages.savefig()
         plt.close()
 
-        fig, axs = plt.subplots(ncols=2, figsize=(8, 4), sharey=True)
+        fig, axs = plt.subplots(ncols=2, figsize=(8, 4))
         seaborn.ecdfplot(
             long_df,
             x='value',
             hue='variable',
             linewidth=0.7,
             ax=axs[0])
+        seaborn.move_legend(axs[0], loc='lower center')
         seaborn.despine()
         axs[0].set_title(
             'bootstrapped values', fontsize=10)
-        # seaborn.histplot(
-        #     data,
-        #     x='python_prediction',
-        #     bins=100,
-        #     linewidth=None,
-        #     ax=axs[0])
-        # seaborn.despine()
-        # axs[0].set_title(
-        #     'bootstrapped values', fontsize=10)
-        # seaborn.histplot(
-        #     mswep_df,
-        #     x='mswep_precip',
-        #     bins=100,
-        #     linewidth=None,
-        #     ax=axs[1])
-        # seaborn.despine()
-        # axs[1].set_title(
-        #     f'observed regional avg \n'
-        #     f'({str(mswep_df.index.min())[:10]} : '
-        #     f'{str(mswep_df.index.max())[:10]})')
         if 'residual' in data.columns:
             seaborn.histplot(
                 data,
@@ -113,6 +96,8 @@ def plot(dates_filepath, precip_filepath, observed_mean_precip_filepath,
                 ax=axs[1])
             seaborn.despine()
             axs[1].set_title('residual')
+        else:
+            axs[1].axis('off')
         pdf_pages.savefig()
         plt.close()
 
