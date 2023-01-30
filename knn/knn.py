@@ -214,31 +214,21 @@ def slice_dates_around_dayofyear(dates_array, month, day, near_window):
     return numpy.array([i for r in ranges for i in r])
 
 
-def marginal_probability_of_transitions(projected_jp_matrix):
-    """Add joint-probability matrices; calculate marginal probability matrix.
+def marginal_probability_of_transitions(array):
+    """Calculate marginal probability matrix.
 
     Args:
-        observed_matrix (numpy.array): 2-d array of shape (3,3)
-        delta_matrix (numpy.array): 2-d array of shape (3,3)
+        array (numpy.array): shape (1, 3)
 
     Returns:
-        (numpy.array): 2-d array of shape (3,3)
+        (numpy.array): shape (1, 3)
     """
-    # projected_jp_matrix = observed_matrix + delta_matrix
-    projected_jp_matrix[projected_jp_matrix < 0] = 0
-    # TODO: In R, it appears there's another normalization step here:
-    # projected_jp_matrix / projected_jp_matrix.sum()
-
-    def func(x):
-        if x.sum() <= 0:
-            # all joint probabilities <=0;
-            # force marginal probabilities to be uniform
-            # TODO: is there a better way to handle this?
-            x = numpy.ones_like(x)
-            LOGGER.info('all joint probabilities were <= 0')
-        return x / x.sum()
-
-    return numpy.apply_along_axis(func, 1, projected_jp_matrix)
+    array[array < 0] = 0
+    if array.sum() <= 0:
+        # force marginal probabilities to be uniform
+        LOGGER.info('all joint probabilities were <= 0')
+        array = numpy.ones_like(array)
+    return array / array.sum()
 
 
 def jp_matrix_from_transitions_sequence(
@@ -354,7 +344,7 @@ def bootstrap_dates_precip(
 
     simulation_dates_index = date_range_no_leap(*prediction_dates)
     LOGGER.info(
-        f'Simulating precip for period {simulation_dates_index.min()} : '
+        f'Bootstrapping dates for period {simulation_dates_index.min()} : '
         f'{simulation_dates_index.max()}')
     day_one = simulation_dates_index[0]
     window_idx = slice_dates_around_dayofyear(
@@ -398,14 +388,23 @@ def bootstrap_dates_precip(
         delta_jp_doy_yr = jp_matrix - gcm_ref_jp_matrix
         observed_jp_doy = historic_obs_jp_matrix_lookup[sim_date.month][sim_date.day]
         projected_jp_matrix = observed_jp_doy + delta_jp_doy_yr
-        margins_matrix = marginal_probability_of_transitions(
-            projected_jp_matrix)
+        jp_array = projected_jp_matrix[current_wet_state]
+        # some projected probabilities could be negative after adding
+        # the delta matrix; clamp at zero
+        jp_array[jp_array < 0] = 0
+        if jp_array.sum() <= 0:
+            # force marginal probabilities to be uniform
+            LOGGER.info(
+                f'all joint probabilities of transitions from precip state'
+                f'[{current_wet_state}] are <= 0 for sim_date {sim_date}')
+            jp_array = numpy.ones_like(jp_array)
+        margins_array = jp_array / jp_array.sum()
         next_wet_state = numpy.random.choice(
-            [DRY, WET, VERY_WET], p=margins_matrix[current_wet_state])
+            [DRY, WET, VERY_WET], p=margins_array)
         sim_dict['next_wet_state'] = next_wet_state
 
-        valid_mask = numpy.array([False])
         search_window = NEAR_WINDOW
+        valid_mask = numpy.array([False])
         while not valid_mask.any():
             # transitions array is one day shorter than historical record
             # so trim the last day off the historical record before indexing.
@@ -439,7 +438,7 @@ def bootstrap_dates_precip(
 
     dataframe = pandas.DataFrame.from_dict(dates_lookup, orient='index')
     dataframe.to_csv(target_csv_path)
-    LOGGER.info(f'Simulation complete. Created file: {target_csv_path}')
+    LOGGER.info(f'Bootstrapped dates complete. Created file: {target_csv_path}')
 
 
 def downscale_precip(
@@ -479,6 +478,7 @@ def downscale_precip(
         )
     target_dataset = xarray.Dataset({'precipitation': da})
     target_dataset.to_netcdf(target_netcdf_path)
+    LOGGER.info(f'Downscaling complete. Created file: {target_netcdf_path}')
 
 
 def rasterize_aoi(aoi_path, netcdf_path, target_filepath, fill=0):
@@ -573,7 +573,7 @@ def execute(args):
             first and last day in the reference period, which is used to
             calculate climate "normals".
         args['lower_precip_threshold'] (float): the lower boundary of the
-            middle bin of precipitation states.
+            middle bin of precipitation states. Units: mm
         args['upper_precip_percentile'] (float): a percentile (from 0:100) with
             which to extract the absolute precipitation value that will be the
             upper boundary (inclusive) of the middle bin of precipitation states.
@@ -583,7 +583,7 @@ def execute(args):
         args['prediction_dates'] (sequence, optional):
             ('YYYY-MM-DD', 'YYYY-MM-DD') first and last day in the simulation period.
             Required if `hindcast=False`.
-        args['gcm_model_list'] (sequence, optional): a sequence of strings
+        args['gcm_model_list'] (sequence): a sequence of strings
             representing CMIP6 model codes. Each model will be used to generate
             a single downscaled product for each experiment in `gcm_experiment_list`.
             Available models are stored in ``GCM_MODEL_LIST``.
@@ -698,7 +698,11 @@ def execute(args):
             dependent_task_list=[hind_downscale_precip_task]
         )
 
-    for gcm_model in args['gcm_model_list']:
+    try:
+        gcm_model_list = args['gcm_model_list']
+    except KeyError:
+        gcm_model_list = []
+    for gcm_model in gcm_model_list:
         historical_gcm_files = GCSFS.glob(
             f"{GCM_PREFIX}/{gcm_model}/{GCM_PRECIP_VAR}_day_{gcm_model}_historical_*.zarr/")
         if len(historical_gcm_files) == 0:

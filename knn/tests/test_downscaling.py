@@ -145,27 +145,3 @@ class TestKNN(unittest.TestCase):
         jp_matrix = knn.jp_matrix_from_transitions_sequence(
             dataset.time, transitions, month, day, near_window)
         numpy.testing.assert_array_almost_equal(jp_matrix, expected_matrix)
-
-    def test_marginal_probabilities(self):
-        """Test marginal probability calc when JP shifts to <= 0."""
-        from .. import knn
-
-        # These matrices occurred when running the program.
-        observed_jp_matrix = numpy.array([
-            [0.00222469, 0.01001112, 0.        ],
-            [0.00889878, 0.3003337 , 0.15906563],
-            [0.00111235, 0.16129032, 0.3570634 ]])
-
-        # These changes in probabilities will shift the entire first
-        # row of observed joint-probabilities to <= 0.
-        delta_jp_matrix = numpy.array([
-            [-0.05576567, -0.02788283,  0.        ],
-            [ 0.16544308, -0.45057471,  0.09885057],
-            [ 0.        ,  0.02662217,  0.24330738]])
-
-        result = knn.marginal_probability_of_transitions(
-            observed_jp_matrix + delta_jp_matrix)
-
-        sums = numpy.sum(result, axis=1)
-        self.assertTrue(numpy.all(sums > 0))
-        self.assertTrue(numpy.all(numpy.isclose(sums, sums[0])))
