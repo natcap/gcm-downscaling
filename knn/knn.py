@@ -1,7 +1,13 @@
+"""
+This work is an adaptation of the GCMClimTool Library
+by Angarita H., Yates D., Depsky N. 2014-2021
+"""
+
 from collections import defaultdict
 from datetime import datetime, timedelta
 import logging
 import os
+from pprint import pformat
 
 from affine import Affine
 import gcsfs
@@ -264,23 +270,49 @@ def compute_historical_jp_matrices(
 
 
 def bootstrap_dates_precip(
-        observed_data_path, prediction_start_date, prediction_end_date,
-        reference_start_date, reference_end_date,
+        observed_data_path, prediction_dates, reference_period_dates,
         lower_precip_threshold, upper_precip_percentile, target_csv_path,
         gcm_netcdf_path=None, hindcast=False):
+    """Create a sequence of paired dates, matching each date in the
+       simulation period with a date from the observed, historical record.
+
+    Args:
+        observed_data_path (str): Path to netCDF with dims (`time`) and
+            variable ``MSWEP_VAR``, which represents the mean value in
+            the area of interest.
+        prediction_dates (sequence): ('YYYY-MM-DD', 'YYYY-MM-DD')
+            first and last day in the simulation period.
+        reference_period_dates (sequence): ('YYYY-MM-DD', 'YYYY-MM-DD')
+            first and last day in the reference period, which is used to
+            calculate climate "normals".
+        lower_precip_threshold (float): the lower boundary of the middle bin
+            of precipitation states.
+        upper_precip_percentile (float): a percentile (from 0:100) with which
+            to extract the absolute precipitation value that will be the upper
+            boundary (inclusive) of the middle bin of precipitation states.
+        target_csv_path (str): Path to a CSV file created by this function. It
+            will contain a sequence of paired dates, matching each date in the
+            simulation period with a date from the observed record.
+        gcm_netcdf_path (str, optional): Path to a GCM netCDF with dims (`time`)
+            and variable ``GCM_PRECIP_VAR``. Required if `hindcast=False`.
+        hindcast (bool, optional): If True, prediction dates must be within
+            the range of the observed data (i.e. ``MSWEP_DATE_RANGE``) and
+            observed data is substituted for GCM data to create
+            joint-probability matrices.
+    """
     dates_lookup = {}
     gcm_var = GCM_PRECIP_VAR
 
     with xarray.open_dataset(observed_data_path) as obs_dataset:
         LOGGER.info(
             f'computing observed JP matrices for reference period '
-            f'{reference_start_date} : {reference_end_date}')
+            f'{reference_period_dates[0]} : {reference_period_dates[1]}')
         obs_dataset = obs_dataset.sortby('time')
         obs_reference_period_ds = obs_dataset.sel(
-                time=slice(reference_start_date, reference_end_date))
+                time=slice(*reference_period_dates))
         lower_bound_obs = lower_precip_threshold
         upper_bound_obs = numpy.percentile(
-            obs_reference_period_ds[MSWEP_VAR].values, q=upper_precip_percentile)
+            obs_reference_period_ds[MSWEP_VAR].values, q=[upper_precip_percentile])
         LOGGER.info(
             f'Threshold precip values used for observational record: '
             f'Lower bound: {lower_bound_obs}, '
@@ -301,15 +333,15 @@ def bootstrap_dates_precip(
     else:
         with xarray.open_dataset(gcm_netcdf_path, use_cftime=True) as gcm_dataset:
             gcm_dataset = gcm_dataset.sortby('time')
-            validate(gcm_dataset, prediction_start_date, prediction_end_date)
+            validate(gcm_dataset, *prediction_dates)
             LOGGER.info(
                 f'computing GCM JP matrices for reference period '
-                f'{reference_start_date} : {reference_end_date}')
+                f'{reference_period_dates[0]} : {reference_period_dates[1]}')
             gcm_reference_period_ds = gcm_dataset.sel(
-                time=slice(reference_start_date, reference_end_date))
+                time=slice(*reference_period_dates))
             lower_bound_gcm = lower_precip_threshold / KG_M2S_TO_MM
             upper_bound_gcm = numpy.percentile(
-                gcm_reference_period_ds[gcm_var].values, q=upper_precip_percentile)
+                gcm_reference_period_ds[gcm_var].values, q=[upper_precip_percentile])
             LOGGER.info(
                 f'Threshold precip values used for GCM record: '
                 f'Lower bound: {lower_bound_gcm}, '
@@ -320,8 +352,7 @@ def bootstrap_dates_precip(
             historic_gcm_jp_matrix_lookup = compute_historical_jp_matrices(
                 transitions_array_gcm, gcm_reference_period_ds.time)
 
-    simulation_dates_index = date_range_no_leap(
-        prediction_start_date, prediction_end_date)
+    simulation_dates_index = date_range_no_leap(*prediction_dates)
     LOGGER.info(
         f'Simulating precip for period {simulation_dates_index.min()} : '
         f'{simulation_dates_index.max()}')
@@ -414,6 +445,19 @@ def bootstrap_dates_precip(
 def downscale_precip(
         bootstrapped_dates_path, gridded_observed_precip,
         aoi_mask_path, target_netcdf_path):
+    """Construct a simulated timeseries of gridded precipitation by shuffling
+    gridded historic precip into the order determined by
+    ``bootstrap_dates_precip``.
+
+    Args:
+        bootstrapped_dates_path (str): Path to CSV containing the series of
+            bootstrapped dates from ``bootstrap_dates_precip``.
+        gridded_observed_precip (str): Path to netCDF representing the gridded
+            observed climate variable. This is the grid that will be downscaled
+            onto.
+        aoi_mask_path (str): Path to netCDF containing a boolean `aoi` variable.
+        target_netcdf_path (str): Path to netCDF - the downscaled product.
+    """
     dates = pandas.read_csv(bootstrapped_dates_path, parse_dates={'date': [0]})
     with xarray.open_dataset(gridded_observed_precip) as dataset:
         with xarray.open_dataset(aoi_mask_path) as aoi_dataset:
@@ -509,8 +553,8 @@ def validate(dataset, prediction_start_date, prediction_end_date):
     gcm_start_date = datetime.fromisoformat(dataset.time.min().item().isoformat())
     gcm_end_date = datetime.fromisoformat(dataset.time.max().item().isoformat())
     date_offset = timedelta(days=NEAR_WINDOW)
-    if ((datetime.strptime(prediction_end_date, '%Y-%m-%d') + date_offset) > gcm_end_date or
-            (datetime.strptime(prediction_start_date, '%Y-%m-%d') - date_offset) < gcm_start_date):
+    if ((datetime.strptime(prediction_start_date, '%Y-%m-%d') + date_offset) > gcm_end_date or
+            (datetime.strptime(prediction_end_date, '%Y-%m-%d') - date_offset) < gcm_start_date):
         raise ValueError(
             f'the requested prediction period {prediction_start_date} : '
             f'{prediction_end_date} is outside the time-range of the gcm'
@@ -518,16 +562,44 @@ def validate(dataset, prediction_start_date, prediction_end_date):
 
 
 def execute(args):
-    """
-    Args:
-        args[data_store_path] (string): path to store of CMIP netcdf files,
-            with subdirectories for each model (e.g. "CESM2"). Each NetCDF
-            should have coordinates named 'lon', 'lat', 'time'. Filenames
-            should follow this pattern:
-                f"{args['gcm_var']}_day_{gcm_model}_{gcm_experiment}_*.nc"
+    """Create a downscaled precipitation product for an area of interest.
 
+    Args:
+        args['aoi_path'] (str): a path to a GDAL polygon vector. Coordinates
+            represented by longitude, latitude decimal degrees (e.g. WGS84).
+        args['workspace_dir'] (str): a path to the directory where this program
+            writes output and other temporary files.
+        args['reference_period_dates'] (sequence): ('YYYY-MM-DD', 'YYYY-MM-DD')
+            first and last day in the reference period, which is used to
+            calculate climate "normals".
+        args['lower_precip_threshold'] (float): the lower boundary of the
+            middle bin of precipitation states.
+        args['upper_precip_percentile'] (float): a percentile (from 0:100) with
+            which to extract the absolute precipitation value that will be the
+            upper boundary (inclusive) of the middle bin of precipitation states.
+        args['hindcast'] (bool): If True, observed data (MSWEP) is substituted
+            for GCM data and the prediction period is set to match the date
+            range of the observed dataset (``MSWEP_DATE_RANGE``).
+        args['prediction_dates'] (sequence, optional):
+            ('YYYY-MM-DD', 'YYYY-MM-DD') first and last day in the simulation period.
+            Required if `hindcast=False`.
+        args['gcm_model_list'] (sequence, optional): a sequence of strings
+            representing CMIP6 model codes. Each model will be used to generate
+            a single downscaled product for each experiment in `gcm_experiment_list`.
+            Available models are stored in ``GCM_MODEL_LIST``.
+            Required if `hindcast=False`.
+        args['gcm_experiment_list'] (sequence, optional): a sequence of strings
+            representing CMIP6 SSP experiments. Available experiments are
+            stored in ``GCM_EXPERIMENT_LIST``. If a CMIP model does not include
+            a given experiment, that experiment will be skipped for that model.
+            Required if `hindcast=False`.
+        args['n_workers'] (int, optional): The number of worker processes to
+            use. If omitted, computation will take place in the current process.
+            If a positive number, tasks can be parallelized across this many
+            processes, which can be useful if `gcm_model_list` or
+            `gcm_experiement_list` contain multiple items.
     """
-    LOGGER.info(args)
+    LOGGER.info(pformat(args))
     taskgraph_working_dir = os.path.join(args['workspace_dir'], '.taskgraph')
     graph = taskgraph.TaskGraph(taskgraph_working_dir, args['n_workers'])
     intermediate_dir = os.path.join(args['workspace_dir'], 'intermediate')
@@ -582,10 +654,8 @@ def execute(args):
             func=bootstrap_dates_precip,
             kwargs={
                 'observed_data_path': mswep_netcdf_path,
-                'prediction_start_date': MSWEP_DATE_RANGE[0],
-                'prediction_end_date': MSWEP_DATE_RANGE[1],
-                'reference_start_date': args['ref_period_start_date'],
-                'reference_end_date': args['ref_period_end_date'],
+                'prediction_dates': MSWEP_DATE_RANGE,
+                'reference_period_dates': args['reference_period_dates'],
                 'lower_precip_threshold': args['lower_precip_threshold'],
                 'upper_precip_percentile': args['upper_precip_percentile'],
                 'target_csv_path': hindcast_target_csv_path,
@@ -619,8 +689,7 @@ def execute(args):
                 'observed_mean_precip_filepath': mswep_netcdf_path,
                 'observed_precip_filepath': mswep_extract_path,
                 'aoi_netcdf_path': aoi_mask_mswep_path,
-                'reference_start_date': args['ref_period_start_date'],
-                'reference_end_date': args['ref_period_end_date'],
+                'reference_period_dates': args['reference_period_dates'],
                 'hindcast': True,
                 'target_filename': hindcast_target_pdf_path
             },
@@ -631,7 +700,7 @@ def execute(args):
 
     for gcm_model in args['gcm_model_list']:
         historical_gcm_files = GCSFS.glob(
-            f"{GCM_PREFIX}/{gcm_model}/{args['gcm_var']}_day_{gcm_model}_historical_*.zarr/")
+            f"{GCM_PREFIX}/{gcm_model}/{GCM_PRECIP_VAR}_day_{gcm_model}_historical_*.zarr/")
         if len(historical_gcm_files) == 0:
             LOGGER.warning(
                 f'No files found for model: {gcm_model}, experiment: historical'
@@ -674,7 +743,7 @@ def execute(args):
         )
         for gcm_experiment in args['gcm_experiment_list']:
             future_gcm_files = GCSFS.glob(
-                f"{GCM_PREFIX}/{gcm_model}/{args['gcm_var']}_day_{gcm_model}_{gcm_experiment}_*.zarr/")
+                f"{GCM_PREFIX}/{gcm_model}/{GCM_PRECIP_VAR}_day_{gcm_model}_{gcm_experiment}_*.zarr/")
 
             if len(future_gcm_files) == 0:
                 LOGGER.warning(
@@ -697,7 +766,7 @@ def execute(args):
 
             gcm_netcdf_path = os.path.join(
                 intermediate_dir,
-                f"{args['gcm_var']}_day_{gcm_model}_{gcm_experiment}_mean.nc")
+                f"{GCM_PRECIP_VAR}_day_{gcm_model}_{gcm_experiment}_mean.nc")
             gcm_future_extract_path = os.path.join(
                 intermediate_dir, f'extracted_{gcm_model}_{gcm_experiment}.nc')
             extract_future_gcm_task = graph.add_task(
@@ -733,10 +802,8 @@ def execute(args):
                 func=bootstrap_dates_precip,
                 kwargs={
                     'observed_data_path': mswep_netcdf_path,
-                    'prediction_start_date': args['prediction_start_date'],
-                    'prediction_end_date': args['prediction_end_date'],
-                    'reference_start_date': args['ref_period_start_date'],
-                    'reference_end_date': args['ref_period_end_date'],
+                    'prediction_dates': args['prediction_dates'],
+                    'reference_period_dates': args['reference_period_dates'],
                     'gcm_netcdf_path': gcm_netcdf_path,
                     'lower_precip_threshold': args['lower_precip_threshold'],
                     'upper_precip_percentile': args['upper_precip_percentile'],
@@ -769,8 +836,7 @@ def execute(args):
                     'observed_mean_precip_filepath': mswep_netcdf_path,
                     'observed_precip_filepath': mswep_extract_path,
                     'aoi_netcdf_path': aoi_mask_mswep_path,
-                    'reference_start_date': args['ref_period_start_date'],
-                    'reference_end_date': args['ref_period_end_date'],
+                    'reference_period_dates': args['reference_period_dates'],
                     'hindcast': False,
                     'target_filename': target_pdf_path
                 },

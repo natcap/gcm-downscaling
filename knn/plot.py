@@ -13,8 +13,8 @@ LOGGER = logging.getLogger(__name__)
 
 
 def plot(dates_filepath, precip_filepath, observed_mean_precip_filepath,
-         observed_precip_filepath, aoi_netcdf_path, reference_start_date,
-         reference_end_date, hindcast, target_filename):
+         observed_precip_filepath, aoi_netcdf_path, reference_period_dates,
+         hindcast, target_filename):
     LOGGER.info(f'creating report for {precip_filepath}')
 
     bootstrapped_data = pandas.read_csv(
@@ -44,11 +44,18 @@ def plot(dates_filepath, precip_filepath, observed_mean_precip_filepath,
         data_series_list = ['python_prediction']
         # For forecasts, only the reference period of the observed data
         # is relevant
-        mswep_df = mswep_df[reference_start_date: reference_end_date]
+        mswep_df = mswep_df[reference_period_dates[0]: reference_period_dates[1]]
+
+    data['month'] = data.index.month
+    data_long = pandas.melt(
+        data[['python_prediction', 'month']], id_vars='month')
+    mswep_df['month'] = mswep_df.index.month
+    mswep_long = pandas.melt(mswep_df, id_vars='month')
+    long_df = pandas.concat([data_long, mswep_long])
+    long_df.reset_index(drop=True, inplace=True)
 
     with PdfPages(target_filename) as pdf_pages:
         fig, axs = plt.subplots(nrows=2, figsize=(12, 6), sharex=True)
-        fig.frameon = False
         data.plot(
             y=data_series_list,
             linewidth=0.5,
@@ -67,53 +74,57 @@ def plot(dates_filepath, precip_filepath, observed_mean_precip_filepath,
         pdf_pages.savefig()
         plt.close()
 
-        fig, axs = plt.subplots(ncols=3, figsize=(12, 4), sharey=True)
-        fig.frameon = False
-        seaborn.histplot(
-            data,
-            x='python_prediction',
-            bins=100,
-            linewidth=None,
+        fig, axs = plt.subplots(ncols=2, figsize=(8, 4), sharey=True)
+        seaborn.ecdfplot(
+            long_df,
+            x='value',
+            hue='variable',
+            linewidth=0.7,
             ax=axs[0])
         seaborn.despine()
         axs[0].set_title(
             'bootstrapped values', fontsize=10)
-        seaborn.histplot(
-            mswep_df,
-            x='mswep_precip',
-            bins=100,
-            linewidth=None,
-            ax=axs[1])
-        seaborn.despine()
-        axs[1].set_title(
-            f'observed regional avg \n'
-            f'({str(mswep_df.index.min())[:10]} : '
-            f'{str(mswep_df.index.max())[:10]})')
+        # seaborn.histplot(
+        #     data,
+        #     x='python_prediction',
+        #     bins=100,
+        #     linewidth=None,
+        #     ax=axs[0])
+        # seaborn.despine()
+        # axs[0].set_title(
+        #     'bootstrapped values', fontsize=10)
+        # seaborn.histplot(
+        #     mswep_df,
+        #     x='mswep_precip',
+        #     bins=100,
+        #     linewidth=None,
+        #     ax=axs[1])
+        # seaborn.despine()
+        # axs[1].set_title(
+        #     f'observed regional avg \n'
+        #     f'({str(mswep_df.index.min())[:10]} : '
+        #     f'{str(mswep_df.index.max())[:10]})')
         if 'residual' in data.columns:
             seaborn.histplot(
                 data,
                 x='residual',
                 bins=100,
                 linewidth=None,
-                ax=axs[2])
+                ax=axs[1])
             seaborn.despine()
-            axs[2].set_title('residual')
+            axs[1].set_title('residual')
         pdf_pages.savefig()
         plt.close()
 
-        data['month'] = data.index.month
-        data_long = pandas.melt(
-            data[data_series_list + ['month']], id_vars="month")
         nrows = 2
         ncols = 6
         fig, axs = plt.subplots(
             nrows=nrows, ncols=ncols, figsize=(12, 4), sharex=True, sharey=True)
-        fig.frameon = False
         for r in range(nrows):
             for c in range(ncols):
                 month = r*6 + c + 1
                 seaborn.ecdfplot(
-                    data_long[data_long['month'] == month],
+                    long_df[long_df['month'] == month],
                     x="value",
                     hue="variable",
                     linewidth=0.5,
@@ -134,7 +145,8 @@ def plot(dates_filepath, precip_filepath, observed_mean_precip_filepath,
             max_precip = downscaled_mean.max()
         with xarray.open_dataset(observed_precip_filepath) as obs_dataset:
             obs_dataset = obs_dataset.sortby('time')
-            obs_dataset = obs_dataset.sel(time=slice(reference_start_date, reference_end_date))
+            obs_dataset = obs_dataset.sel(
+                time=slice(*reference_period_dates))
             with xarray.open_dataset(aoi_netcdf_path) as aoi_dataset:
                 obs_dataset['aoi'] = aoi_dataset.aoi
             obs_dataset = obs_dataset.where(obs_dataset.aoi == 1, drop=True)
@@ -152,7 +164,7 @@ def plot(dates_filepath, precip_filepath, observed_mean_precip_filepath,
         obs_mean.plot(ax=axs[1], levels=levels)
         axs[1].set_title(
             f'observed average daily precip\n'
-            f'({reference_start_date} : {reference_end_date})',
+            f'({reference_period_dates[0]} : {reference_period_dates[1]})',
             fontsize=10)
         pdf_pages.savefig()
         plt.close()

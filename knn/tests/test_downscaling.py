@@ -81,7 +81,8 @@ class TestKNN(unittest.TestCase):
         """Test slicing dates from an xarray.Dataset time coordinate"""
         from .. import knn
 
-        dates_index = knn.date_range_no_leap('1979-01-01', '1981-12-31')
+        dates = ('1979-01-01', '1981-12-31')
+        dates_index = knn.date_range_no_leap(*dates)
         dataset = xarray.Dataset({'time': dates_index})
         month = 10
         day = 16
@@ -119,10 +120,8 @@ class TestKNN(unittest.TestCase):
         from .. import knn
 
         n = 900
-        reference_start_date = '1980-01-01'
-        reference_end_date = '1989-12-31'
-        ref_dates = knn.date_range_no_leap(
-            reference_start_date, reference_end_date)
+        reference_dates = ('1980-01-01', '1989-12-31')
+        ref_dates = knn.date_range_no_leap(*reference_dates)
         ref_dates = ref_dates[:n]
         dataset = xarray.Dataset({'time': ref_dates})
         month = 6
