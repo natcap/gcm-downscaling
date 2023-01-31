@@ -2,7 +2,9 @@
 
 1. Request access to climate data
     * Send Dave a google account email address you wish to use for Google Cloud.  
-(gmail or @stanford.edu addresses should work)
+    (gmail or @stanford.edu addresses should work)
+    * _(Users will be granted Role `Storage Object Viewer` for bucket `natcap-climate-data`)_
+
 2. Authenticate with Google Cloud
     * install `gcloud` if needed (https://cloud.google.com/sdk/docs/install)
     * `gcloud config set project natcap-server`
