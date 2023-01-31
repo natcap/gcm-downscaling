@@ -1,36 +1,37 @@
 ## Setup
 
 1. Request access to climate data
-* Send Dave a google account email address you wish to use for Google Cloud.  
+    * Send Dave a google account email address you wish to use for Google Cloud.  
 (gmail or @stanford.edu addresses should work)
 2. Authenticate with Google Cloud
-* install `gcloud` if needed (https://cloud.google.com/sdk/docs/install)
-* `gcloud config set project natcap-server`
-* `gcloud auth application-default login`
+    * install `gcloud` if needed (https://cloud.google.com/sdk/docs/install)
+    * `gcloud config set project natcap-server`
+    * `gcloud auth application-default login`
 
-## Usage, Option 1: with a conda environment
+## Usage, option 1: with a conda environment
 
-1. Create and activate a python environment
+1. Create and activate a python environment  
 `conda env create -p ./env --file requirements.yml`  
 `conda activate ./env`
 
 2. Make a copy of `example_run.py` and modify the `args` dictionary
 
-3. `python example_run.py`
+3. `python copy_of_example_run.py`
 
-## Usage, Option 2: with a docker container
+## Usage, option 2: with a docker container
 
 1. Setup a directory containing your AOI vector and a copy of `example_run.py`
-2. modify the `args` dictionary in `example_run.py`. 
-* set `workspace_dir` to be a relative path within this directory
+2. modify the `args` dictionary in your copy of `example_run.py`. 
+    * set `args['workspace_dir']` to be a relative path within this directory
 3. `docker run --rm -ti -v %CD%:/workspace -w /workspace ghcr.io/natcap/gcm-downscaling:latest python copy_of_example_run.py`
+
+
 
 # About Global Climate Data
 ## Data Availablity
 
 This workflow derives downscaled climate data from,
-* CMIP6 General Circulation Models
--- See `knn.MODEL_LIST` for list of available models
+* CMIP6 General Circulation Models (ee `knn.MODEL_LIST` for list of available models)
 * MSWEP historical precipitation data.
 
 ## Data Storage
@@ -43,7 +44,7 @@ See `scripts/preprocessing/` for workflows to create `zarr` from `netCDF`.
 
 ## Adding new data sources
 ### global data:
-New CMIP6 models, or any other new global data source can be made available
+New CMIP6 models or other new global data source can be made available
 by following the examples in `scripts/preprocessing/` to create `zarr` stores
 and move them to the `natcap-climate-data` bucket. 
 
@@ -61,3 +62,4 @@ The netCDF should contain coordinates and variables named & defined as,
 `Variables:`
 * `precipitation` - dimensions: `(time, lat, lon)`; units: millimeter
 
+The downscaled product will have the same spatial resolution as the observation data.
