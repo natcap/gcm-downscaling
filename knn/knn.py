@@ -612,18 +612,25 @@ def execute(args):
     aoi_mask_mswep_path = os.path.join(intermediate_dir, 'aoi_mask_mswep.nc')
     mswep_netcdf_path = os.path.join(intermediate_dir, 'mswep_mean.nc')
 
-    extract_mswep_task = graph.add_task(
-        func=extract_from_zarr,
-        kwargs={
-            'zarr_path': MSWEP_STORE_PATH,
-            'aoi_path': args['aoi_path'],
-            'target_path': mswep_extract_path,
-            'open_chunks': MSWEP_ZARR_CHUNKS,
-        },
-        task_name='Extract MSWEP data by bounding box',
-        target_path_list=[mswep_extract_path],
-        dependent_task_list=[]
-    )
+    rasterize_dependent_task_list = []
+    if 'observed_dataset_path' in args and \
+            args['observed_dataset_path'] is not None:
+        mswep_extract_path = args['observed_dataset_path']
+    else:
+        extract_mswep_task = graph.add_task(
+            func=extract_from_zarr,
+            kwargs={
+                'zarr_path': MSWEP_STORE_PATH,
+                'aoi_path': args['aoi_path'],
+                'target_path': mswep_extract_path,
+                'open_chunks': MSWEP_ZARR_CHUNKS,
+            },
+            task_name='Extract MSWEP data by bounding box',
+            target_path_list=[mswep_extract_path],
+            dependent_task_list=[]
+        )
+        rasterize_dependent_task_list.append(extract_mswep_task)
+        graph.join()
 
     rasterize_aoi_mswep_task = graph.add_task(
         func=rasterize_aoi,
@@ -634,7 +641,7 @@ def execute(args):
         },
         task_name='Rasterize AOI onto the MSWEP grid.',
         target_path_list=[aoi_mask_mswep_path],
-        dependent_task_list=[extract_mswep_task]
+        dependent_task_list=rasterize_dependent_task_list
     )
 
     reduce_mswep_task = graph.add_task(
@@ -652,11 +659,18 @@ def execute(args):
     if args['hindcast']:
         hindcast_target_csv_path = os.path.join(
             intermediate_dir, 'bootstrapped_dates_precip_hindcast.csv')
+        hindcast_date_range = MSWEP_DATE_RANGE
+        if 'observed_dataset_path' in args and \
+                args['observed_dataset_path'] is not None:
+            with xarray.open_dataset(mswep_netcdf_path) as dataset:
+                min_date = str(dataset.time.min().values)[:10]
+                max_date = str(dataset.time.max().values)[:10]
+            hindcast_date_range = (min_date, max_date)
         hind_bootstrap_dates_task = graph.add_task(
             func=bootstrap_dates_precip,
             kwargs={
                 'observed_data_path': mswep_netcdf_path,
-                'prediction_dates': MSWEP_DATE_RANGE,
+                'prediction_dates': hindcast_date_range,
                 'reference_period_dates': args['reference_period_dates'],
                 'lower_precip_threshold': args['lower_precip_threshold'],
                 'upper_precip_percentile': args['upper_precip_percentile'],
