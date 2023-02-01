@@ -12,6 +12,7 @@ from pprint import pformat
 from affine import Affine
 import gcsfs
 import geopandas
+import google.auth
 import numpy
 from numpy.lib.stride_tricks import sliding_window_view
 import pandas
@@ -73,7 +74,8 @@ MSWEP_STORE_PATH = 'gcs://natcap-climate-data/mswep_1980_2020.zarr'
 MSWEP_DATE_RANGE = ('1980-01-01', '2020-12-31')
 MSWEP_VAR = 'precipitation'
 
-GCSFS = gcsfs.GCSFileSystem(project='natcap-servers')
+credentials, _ = google.auth.default()
+GCSFS = gcsfs.GCSFileSystem(project='natcap-servers', token=credentials)
 GCM_PREFIX = 'natcap-climate-data/cmip6'
 
 # Chunk sizes used to create the zarr stores

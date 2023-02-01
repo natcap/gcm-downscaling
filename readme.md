@@ -10,7 +10,7 @@
     * `gcloud config set project natcap-server`
     * `gcloud auth application-default login`
 
-## Usage, option 1: with a conda environment
+## Usage option 1: with a conda environment
 
 1. Create and activate a python environment  
 `conda env create -p ./env --file requirements.yml`  
@@ -20,14 +20,21 @@
 
 3. `python copy_of_example_run.py`
 
-## Usage, option 2: with a docker container
+## Usage option 2: with a docker container
 
 1. Setup a directory containing your AOI vector and a copy of `example_run.py`
 2. modify the `args` dictionary in your copy of `example_run.py`. 
     * set `args['workspace_dir']` to be a relative path within this directory
-3. `docker run --rm -ti -v %CD%:/workspace -w /workspace ghcr.io/natcap/gcm-downscaling:latest python copy_of_example_run.py`
+3. 
+`docker run --rm -ti 
+-v %CD%:/workspace 
+-v %appdata%/gcloud:/home/mambauser/.config/gcloud 
+-w /workspace 
+-e GOOGLE_CLOUD_PROJECT='natcap-servers'
+ghcr.io/natcap/gcm-downscaling:latest python copy_of_example_run.py`
 
-
+Note: You may need to give Docker more RAM and CPUs than it is allowed to use by default.  
+Adjust in `Docker Desktop > Settings > Resources` 
 
 # About Global Climate Data
 ## Data Availablity
