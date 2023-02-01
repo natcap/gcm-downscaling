@@ -16,7 +16,7 @@ import numpy
 from numpy.lib.stride_tricks import sliding_window_view
 import pandas
 import pygeoprocessing
-import rasterio
+from rasterio.features import rasterize
 import taskgraph
 import xarray
 
@@ -496,7 +496,7 @@ def rasterize_aoi(aoi_path, netcdf_path, target_filepath, fill=0):
 
     aoi_df = geopandas.read_file(aoi_path)
     out_shape = (len(coords['lat']), len(coords['lon']))
-    raster = rasterio.features.rasterize(
+    raster = rasterize(
         aoi_df.geometry,
         out_shape=out_shape,
         fill=fill,
