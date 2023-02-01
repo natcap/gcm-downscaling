@@ -34,7 +34,7 @@
 ghcr.io/natcap/gcm-downscaling:latest python copy_of_example_run.py`
 
 Note: You may need to give Docker more RAM and CPUs than it is allowed to use by default.  
-Adjust in `Docker Desktop > Settings > Resources` 
+Adjust in `Docker Desktop > Settings > Resources`. 6GB of RAM should do it.
 
 # About Global Climate Data
 ## Data Availablity
