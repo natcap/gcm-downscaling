@@ -160,7 +160,6 @@ class TestKNN(unittest.TestCase):
         from knn import knn
         thing = knn.GCSFS
 
-        self.workspace_dir = 'C:/Users/dmf/projects/gcm-project/test_scratch'
         observed_dataset_path = os.path.join(self.workspace_dir, 'obs.nc')
         historical_gcm_path = os.path.join(
             self.workspace_dir, 'historical_gcm.zarr')
