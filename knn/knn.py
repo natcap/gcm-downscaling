@@ -70,7 +70,8 @@ GCM_PRECIP_VAR = 'pr'
 GCM_TEMPERATURE_VAR = 'tas'
 GCM_VAR_LIST = [GCM_PRECIP_VAR, GCM_TEMPERATURE_VAR]
 
-MSWEP_STORE_PATH = 'gcs://natcap-climate-data/mswep_1980_2020.zarr'
+GCS_PROTOCOL = 'gcs://'
+MSWEP_STORE_PATH = f'{GCS_PROTOCOL}natcap-climate-data/mswep_1980_2020.zarr'
 MSWEP_DATE_RANGE = ('1980-01-01', '2020-12-31')
 MSWEP_VAR = 'precipitation'
 
@@ -603,7 +604,8 @@ def execute(args):
     """
     LOGGER.info(pformat(args))
     taskgraph_working_dir = os.path.join(args['workspace_dir'], '.taskgraph')
-    graph = taskgraph.TaskGraph(taskgraph_working_dir, args['n_workers'])
+    graph = taskgraph.TaskGraph(
+        taskgraph_working_dir, args.get('n_workers', -1))
     intermediate_dir = os.path.join(args['workspace_dir'], 'intermediate')
     if not os.path.exists(intermediate_dir):
         os.mkdir(intermediate_dir)
@@ -738,7 +740,7 @@ def execute(args):
         extract_historical_gcm_task = graph.add_task(
             func=extract_from_zarr,
             kwargs={
-                'zarr_path': f'gcs://{historical_gcm_files[0]}',
+                'zarr_path': f'{GCS_PROTOCOL}{historical_gcm_files[0]}',
                 'aoi_path': args['aoi_path'],
                 'target_path': gcm_historical_extract_path,
                 'open_chunks': CMIP_ZARR_CHUNKS
@@ -792,7 +794,7 @@ def execute(args):
             extract_future_gcm_task = graph.add_task(
                 func=extract_from_zarr,
                 kwargs={
-                    'zarr_path': f'gcs://{future_gcm_files[0]}',
+                    'zarr_path': f'{GCS_PROTOCOL}{future_gcm_files[0]}',
                     'aoi_path': args['aoi_path'],
                     'target_path': gcm_future_extract_path,
                     'open_chunks': CMIP_ZARR_CHUNKS

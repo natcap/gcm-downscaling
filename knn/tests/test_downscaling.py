@@ -1,7 +1,14 @@
+import os
+import shutil
+import tempfile
 import unittest
+from unittest.mock import patch, MagicMock
 
+from osgeo import osr
 import numpy
 import pandas
+import pygeoprocessing
+from shapely.geometry import Polygon
 import xarray
 
 
@@ -9,10 +16,10 @@ class TestKNN(unittest.TestCase):
     """Tests knn.py."""
 
     def setUp(self):
-        pass
+        self.workspace_dir = tempfile.mkdtemp()
 
     def tearDown(self):
-        pass
+        shutil.rmtree(self.workspace_dir)
 
     def test_shift_longitude_error_on_missing_dimension(self):
         """Test shift longitude from 0-360."""
@@ -145,3 +152,96 @@ class TestKNN(unittest.TestCase):
         jp_matrix = knn.jp_matrix_from_transitions_sequence(
             dataset.time, transitions, month, day, near_window)
         numpy.testing.assert_array_almost_equal(jp_matrix, expected_matrix)
+
+    @patch('knn.knn.GCS_PROTOCOL', 'file:///')
+    def test_execute(self):
+        """Test the whole execute method."""
+
+        from knn import knn
+        thing = knn.GCSFS
+
+        self.workspace_dir = 'C:/Users/dmf/projects/gcm-project/test_scratch'
+        observed_dataset_path = os.path.join(self.workspace_dir, 'obs.nc')
+        historical_gcm_path = os.path.join(
+            self.workspace_dir, 'historical_gcm.zarr')
+        future_gcm_path = os.path.join(
+            self.workspace_dir, 'future_gcm.zarr')
+        thing.glob = MagicMock(
+            side_effect=[[historical_gcm_path], [future_gcm_path]])
+
+        aoi_path = os.path.join(self.workspace_dir, 'aoi.geojson')
+        srs = osr.SpatialReference()
+        srs.ImportFromEPSG(4326)  # WGS84
+        wkt = srs.ExportToWkt()
+        aoi_geometries = [Polygon([
+            (1, 1), (1, 5), (5, 5), (5, 1), (1, 1)])]
+        pygeoprocessing.shapely_geometry_to_vector(
+            aoi_geometries, aoi_path, wkt, 'GeoJSON')
+
+        start = '1980-01-01'
+        end = '1989-12-31'
+        dates = pandas.date_range(start, end, freq='D')
+        lons = [0.0, 2.0, 4.0, 6.0]
+        lats = [0.0, 2.0, 4.0, 6.0]
+
+        precip_array = numpy.random.negative_binomial(
+            n=1, p=0.4, size=(len(dates), len(lons), len(lats)))
+        da = xarray.DataArray(
+            precip_array,
+            coords={
+                'time': dates,
+                'lon': lons,
+                'lat': lats
+            },
+            dims=('time', 'lon', 'lat')
+        )
+        precip_dataset = xarray.Dataset({knn.MSWEP_VAR: da})
+        precip_dataset.to_netcdf(observed_dataset_path)
+
+        historic_gcm_array = numpy.random.negative_binomial(
+            n=1, p=0.4, size=(len(dates), len(lons), len(lats)))
+        historic_da = xarray.DataArray(
+            historic_gcm_array,
+            coords={
+                'time': dates,
+                'lon': lons,
+                'lat': lats
+            },
+            dims=('time', 'lon', 'lat')
+        )
+        historic_gcm_dataset = xarray.Dataset({knn.GCM_PRECIP_VAR: historic_da})
+        historic_gcm_dataset.to_zarr(historical_gcm_path)
+
+        forecast_start = '2000-01-01'
+        forecast_end = '2001-12-31'
+        forecast_dates = pandas.date_range(
+            forecast_start, forecast_end, freq='D')
+        precip_array = numpy.random.negative_binomial(
+            n=3, p=0.4, size=(len(forecast_dates), len(lons), len(lats)))
+        forecast_da = xarray.DataArray(
+            precip_array,
+            coords={
+                'time': forecast_dates,
+                'lon': lons,
+                'lat': lats
+            },
+            dims=('time', 'lon', 'lat')
+        )
+        forecast_dataset = xarray.Dataset({knn.GCM_PRECIP_VAR: forecast_da})
+        forecast_dataset.to_zarr(future_gcm_path)
+
+        args = {
+            'reference_period_dates': (start, end),
+            'prediction_dates': (forecast_start, forecast_end),
+            'hindcast': True,
+            'gcm_experiment_list': [knn.GCM_EXPERIMENT_LIST[0]],
+            'gcm_model_list': [knn.MODEL_LIST[0]],
+            'upper_precip_percentile': 75,
+            'lower_precip_threshold': 1,  # millimeter
+            'aoi_path': aoi_path,
+            'observed_dataset_path': observed_dataset_path,
+            'workspace_dir': self.workspace_dir,
+        }
+
+        knn.execute(args)
+
