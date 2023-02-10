@@ -586,7 +586,7 @@ def execute(args):
         args['prediction_dates'] (sequence, optional):
             ('YYYY-MM-DD', 'YYYY-MM-DD') first and last day in the simulation period.
             Required if `hindcast=False`.
-        args['gcm_model_list'] (sequence): a sequence of strings
+        args['gcm_model_list'] (sequence, optional): a sequence of strings
             representing CMIP6 model codes. Each model will be used to generate
             a single downscaled product for each experiment in `gcm_experiment_list`.
             Available models are stored in ``GCM_MODEL_LIST``.
