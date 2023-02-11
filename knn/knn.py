@@ -16,8 +16,10 @@ import google.auth
 import numpy
 from numpy.lib.stride_tricks import sliding_window_view
 import pandas
+import pyextremes
 import pygeoprocessing
 from rasterio.features import rasterize
+import scipy
 import taskgraph
 import xarray
 
@@ -43,6 +45,7 @@ DAYS_IN_YEAR = 365
 NEAR_WINDOW = 15  # days
 EPSILON = 0.1
 KG_M2S_TO_MM = (60 * 60 * 24)  # Kg / (m^2 * s) to mm
+EXTREME_PRECIP_QUANTILE = 0.98
 MODEL_LIST = [
     'CanESM5',
     'CESM2',
@@ -444,9 +447,60 @@ def bootstrap_dates_precip(
     LOGGER.info(f'Bootstrapped dates complete. Created file: {target_csv_path}')
 
 
+def sample_from_gpd(series, threshold, n_samples):
+    model = pyextremes.EVA(data=series)
+    model.get_extremes(
+        method='POT',
+        extremes_type='high',
+        threshold=threshold
+    )
+    # model.plot_extremes()
+    model.fit_model(distribution='genpareto')
+    LOGGER.info(model)
+    c = model.distribution.mle_parameters['c']
+    scale = model.distribution.mle_parameters['scale']
+    loc = model.distribution.fixed_parameters['floc']
+    sample = scipy.stats.genpareto.rvs(
+        c, loc, scale, size=n_samples)
+    return sample
+
+
+def synthesize_extreme_values(
+        historical_gcm_path, reference_period_dates,
+        forecast_gcm_path, prediction_period_dates, target_csv_path):
+    LOGGER.info(f'extreme values analysis for {forecast_gcm_path}')
+    with xarray.open_dataset(historical_gcm_path) as dataset:
+        dataset['time'] = dataset.indexes['time'].to_datetimeindex()
+        dataset = dataset.sortby('time')
+        historical_data = dataset.sel(time=slice(*reference_period_dates))
+        historical_data = historical_data.max(['lon', 'lat'])
+    historical_series = historical_data[GCM_PRECIP_VAR].to_series() * KG_M2S_TO_MM
+    with xarray.open_dataset(forecast_gcm_path) as dataset:
+        dataset['time'] = dataset.indexes['time'].to_datetimeindex()
+        dataset = dataset.sortby('time')
+        forecast_data = dataset.sel(time=slice(*prediction_period_dates))
+        forecast_data = forecast_data.max(['lon', 'lat'])
+    forecast_series = forecast_data[GCM_PRECIP_VAR].to_series() * KG_M2S_TO_MM
+
+    threshold = numpy.quantile(historical_series, q=[EXTREME_PRECIP_QUANTILE])[0]
+    LOGGER.info(
+        f'extreme precip threshold: {threshold} '
+        f'for quantile: {EXTREME_PRECIP_QUANTILE}')
+    historical_sample = sample_from_gpd(historical_series, threshold, 10000)
+    forecast_sample = sample_from_gpd(forecast_series, threshold, 10000)
+    df = pandas.DataFrame({
+        'historic_sample': numpy.sort(historical_sample),
+        'forecast_sample': numpy.sort(forecast_sample),
+    })
+    # df.plot()
+    df.to_csv(target_csv_path, index=False)
+    return threshold
+
+
 def downscale_precip(
         bootstrapped_dates_path, gridded_observed_precip,
-        aoi_mask_path, target_netcdf_path):
+        aoi_mask_path, target_netcdf_path, extreme_value_samples_path=None,
+        threshold=None):
     """Construct a simulated timeseries of gridded precipitation by shuffling
     gridded historic precip into the order determined by
     ``bootstrap_dates_precip``.
@@ -459,8 +513,12 @@ def downscale_precip(
             onto.
         aoi_mask_path (str): Path to netCDF containing a boolean `aoi` variable.
         target_netcdf_path (str): Path to netCDF - the downscaled product.
+        extreme_value_samples_path (str): Path to CSV with two columns:
+            'historic_sample', 'forecast_sample'. Not used for hindcasts.
     """
     dates = pandas.read_csv(bootstrapped_dates_path, parse_dates={'date': [0]})
+    if extreme_value_samples_path:
+        extremes = pandas.read_csv(extreme_value_samples_path, index=False)
     with xarray.open_dataset(gridded_observed_precip) as dataset:
         with xarray.open_dataset(aoi_mask_path) as aoi_dataset:
             dataset['aoi'] = aoi_dataset.aoi
@@ -468,7 +526,18 @@ def downscale_precip(
         precip_array = numpy.empty(
             (len(dates.index), *dataset.precipitation.shape[-2:]))
         for i, d in enumerate(dates.historic_date):
-            array = dataset.precipitation.sel(time=d)
+            array = dataset.precipitation.sel(time=d).to_numpy()
+
+            if threshold is not None:
+                adjusted_values = []
+                for x in array.flatten():
+                    delta = 0
+                    if x >= threshold:
+                        idx = numpy.count_nonzero(extremes.historic_sample < x) - 1
+                        delta = extremes.future_sample[idx] - extremes.historic_sample[idx]
+                    adjusted_values.append(x + delta)
+                array = numpy.array(adjusted_values).reshape(array.shape)
+
             precip_array[i] = array
         da = xarray.DataArray(
             precip_array,
@@ -487,7 +556,6 @@ def downscale_precip(
 def rasterize_aoi(aoi_path, netcdf_path, target_filepath, fill=0):
     LOGGER.info(f'rasterizing AOI onto {netcdf_path}')
     with xarray.open_dataset(netcdf_path) as dataset:
-        # dataset = shift_longitude_from_360(dataset)
         coords = dataset.coords
 
     width = coords['lon'][1] - coords['lon'][0]
@@ -780,7 +848,8 @@ def execute(args):
                 continue
             LOGGER.info(f'Starting {gcm_model} {gcm_experiment}')
 
-            target_csv_path = os.path.join(intermediate_dir,
+            target_csv_path = os.path.join(
+                intermediate_dir,
                 f'bootstrapped_dates_precip_{gcm_model}_{gcm_experiment}.csv')
             target_netcdf_path = os.path.join(
                 args['workspace_dir'],
@@ -802,6 +871,25 @@ def execute(args):
                 task_name='Extract GCM future data by bounding box',
                 target_path_list=[gcm_future_extract_path],
                 dependent_task_list=[]
+            )
+
+            target_extreme_values_path = os.path.join(
+                intermediate_dir,
+                f'sythesized_extreme_precip_{gcm_model}_{gcm_experiment}.csv')
+            extreme_values_task = graph.add_task(
+                func=synthesize_extreme_values,
+                kwargs={
+                    'historical_gcm_path': gcm_historical_extract_path,
+                    'reference_period_dates': args['reference_period_dates'],
+                    'forecast_gcm_path': gcm_future_extract_path,
+                    'prediction_period_dates': args['prediction_dates'],
+                    'target_csv_path': target_extreme_values_path,
+                },
+                task_name='Synthesize extreme values',
+                target_path_list=[target_extreme_values_path],
+                store_result=True,
+                dependent_task_list=[extract_future_gcm_task,
+                                     extract_historical_gcm_task]
             )
 
             reduce_gcm_task = graph.add_task(
@@ -836,17 +924,20 @@ def execute(args):
                 dependent_task_list=[reduce_gcm_task, reduce_mswep_task]
             )
 
+            # TODO: do these tasks need unique objects if relying on get()?
+            extreme_precip_threshold = extreme_values_task.get()
             downscale_precip_task = graph.add_task(
                 func=downscale_precip,
                 kwargs={
                     'bootstrapped_dates_path': target_csv_path,
                     'gridded_observed_precip': mswep_extract_path,
                     'aoi_mask_path': aoi_mask_mswep_path,
-                    'target_netcdf_path': target_netcdf_path
+                    'target_netcdf_path': target_netcdf_path,
+                    'extreme_precip_threshold': extreme_precip_threshold
                 },
                 task_name='Downscale Precipitation',
                 target_path_list=[target_netcdf_path],
-                dependent_task_list=[bootstrap_dates_task]
+                dependent_task_list=[bootstrap_dates_task, extreme_values_task]
             )
 
             target_pdf_path = os.path.splitext(target_netcdf_path)[0] + '.pdf'
