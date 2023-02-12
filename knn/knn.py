@@ -500,10 +500,12 @@ def synthesize_extreme_values(
 def downscale_precip(
         bootstrapped_dates_path, gridded_observed_precip,
         aoi_mask_path, target_netcdf_path, extreme_value_samples_path=None,
-        threshold=None):
-    """Construct a simulated timeseries of gridded precipitation by shuffling
-    gridded historic precip into the order determined by
-    ``bootstrap_dates_precip``.
+        extreme_precip_threshold=None):
+    """Construct a simulated timeseries of gridded precipitation.
+
+    Reshuffle the timeseries of ``gridded_observed_precip`` into the order
+    determined by ``bootstrap_dates_precip``. If not a hindcast, also
+    apply a magnitude correction based on extreme values analysis of GCM.
 
     Args:
         bootstrapped_dates_path (str): Path to CSV containing the series of
@@ -511,14 +513,19 @@ def downscale_precip(
         gridded_observed_precip (str): Path to netCDF representing the gridded
             observed climate variable. This is the grid that will be downscaled
             onto.
-        aoi_mask_path (str): Path to netCDF containing a boolean `aoi` variable.
+        aoi_mask_path (str): Path to netCDF with a boolean `aoi` variable.
         target_netcdf_path (str): Path to netCDF - the downscaled product.
-        extreme_value_samples_path (str): Path to CSV with two columns:
-            'historic_sample', 'forecast_sample'. Not used for hindcasts.
+        extreme_value_samples_path (str, optional): Path to CSV with two
+            columns: 'historic_sample', 'forecast_sample'.
+            Not used for hindcasts.
+        extreme_precip_threshold (float, optional): Value determined by extreme
+            values analysis; units match ``gridded_observed_precip`` (mm).
+            Not used for hindcasts.
     """
+    LOGGER.info('Downscaling...')
     dates = pandas.read_csv(bootstrapped_dates_path, parse_dates={'date': [0]})
     if extreme_value_samples_path:
-        extremes = pandas.read_csv(extreme_value_samples_path, index=False)
+        extremes = pandas.read_csv(extreme_value_samples_path)
     with xarray.open_dataset(gridded_observed_precip) as dataset:
         with xarray.open_dataset(aoi_mask_path) as aoi_dataset:
             dataset['aoi'] = aoi_dataset.aoi
@@ -528,15 +535,14 @@ def downscale_precip(
         for i, d in enumerate(dates.historic_date):
             array = dataset.precipitation.sel(time=d).to_numpy()
 
-            if threshold is not None:
+            if extreme_precip_threshold is not None:
+                extreme_mask = array >= extreme_precip_threshold
                 adjusted_values = []
-                for x in array.flatten():
-                    delta = 0
-                    if x >= threshold:
-                        idx = numpy.count_nonzero(extremes.historic_sample < x) - 1
-                        delta = extremes.future_sample[idx] - extremes.historic_sample[idx]
+                for x in array[extreme_mask].flatten():
+                    idx = numpy.count_nonzero(extremes.historic_sample < x) - 1
+                    delta = extremes.forecast_sample[idx] - extremes.historic_sample[idx]
                     adjusted_values.append(x + delta)
-                array = numpy.array(adjusted_values).reshape(array.shape)
+                array[extreme_mask] = adjusted_values
 
             precip_array[i] = array
         da = xarray.DataArray(
@@ -924,7 +930,8 @@ def execute(args):
                 dependent_task_list=[reduce_gcm_task, reduce_mswep_task]
             )
 
-            # TODO: do these tasks need unique objects if relying on get()?
+            # TODO: is it problematic for these task objects created in for-loop
+            # to overwrite each other?
             extreme_precip_threshold = extreme_values_task.get()
             downscale_precip_task = graph.add_task(
                 func=downscale_precip,
@@ -933,6 +940,7 @@ def execute(args):
                     'gridded_observed_precip': mswep_extract_path,
                     'aoi_mask_path': aoi_mask_mswep_path,
                     'target_netcdf_path': target_netcdf_path,
+                    'extreme_value_samples_path': target_extreme_values_path,
                     'extreme_precip_threshold': extreme_precip_threshold
                 },
                 task_name='Downscale Precipitation',
