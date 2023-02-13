@@ -542,8 +542,16 @@ def downscale_precip(
                 extreme_mask = array >= extreme_precip_threshold
                 adjusted_values = []
                 for x in array[extreme_mask].flatten():
-                    idx = numpy.count_nonzero(extremes.historic_sample < x) - 1
-                    delta = extremes.forecast_sample[idx] - extremes.historic_sample[idx]
+                    idx = numpy.count_nonzero(extremes.historic_sample < x)
+                    try:
+                        delta = extremes.forecast_sample[idx] - \
+                                extremes.historic_sample[idx]
+                    except KeyError:
+                        # Not sure this can happen, but if x is larger
+                        # than all values sampled from the generalized-pareto
+                        # distribution, then idx equals the sample size.
+                        delta = extremes.forecast_sample[idx - 1] - \
+                                extremes.historic_sample[idx - 1]
                     adjusted_values.append(x + delta)
                 array[extreme_mask] = adjusted_values
 
