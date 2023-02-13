@@ -567,6 +567,8 @@ def rasterize_aoi(aoi_path, netcdf_path, target_filepath, fill=0):
     with xarray.open_dataset(netcdf_path) as dataset:
         coords = dataset.coords
 
+    # netcdf will always have at least 2 coords in each dimension because
+    # the bbox that extracted it was buffered by 1 netcdf pixel
     width = coords['lon'][1] - coords['lon'][0]
     height = coords['lat'][1] - coords['lat'][0]  # should be negative
     translation = Affine.translation(
@@ -581,7 +583,8 @@ def rasterize_aoi(aoi_path, netcdf_path, target_filepath, fill=0):
         out_shape=out_shape,
         fill=fill,
         transform=transform,
-        dtype=int)
+        dtype=int,
+        all_touched=True)
 
     da = xarray.DataArray(
         raster,
@@ -619,11 +622,15 @@ def extract_from_zarr(zarr_path, aoi_path, target_path, open_chunks=-1):
         # it might be best to shift the AOI coordinates to 0:360, rather than
         # shifting the GCM to -180:180.
         dataset = shift_longitude_from_360(dataset)
+        # expand the bbox by one pixel on all sides to accomodate
+        # rasterization with all_touched=T
+        width = numpy.abs(dataset.coords['lon'][1] - dataset.coords['lon'][0])
+        height = numpy.abs(dataset.coords['lat'][1] - dataset.coords['lat'][0])
         dataset = dataset.where(
-            (dataset.lon >= minx)
-            & (dataset.lon <= maxx)
-            & (dataset.lat >= miny)
-            & (dataset.lat <= maxy), drop=True)
+            (dataset.lon >= minx - width)
+            & (dataset.lon <= maxx + width)
+            & (dataset.lat >= miny - height)
+            & (dataset.lat <= maxy + height), drop=True)
         dataset.to_netcdf(target_path)
 
 
@@ -842,7 +849,7 @@ def execute(args):
             dependent_task_list=[extract_historical_gcm_task]
         )
         for gcm_experiment in args['gcm_experiment_list']:
-            future_gcm_files = GCSFS.glob(
+            future_gcm_files = gcs_filesystem.glob(
                 f"{GCM_PREFIX}/{gcm_model}/{GCM_PRECIP_VAR}_day_{gcm_model}_{gcm_experiment}_*.zarr/")
 
             if len(future_gcm_files) == 0:
