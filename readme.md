@@ -1,3 +1,11 @@
+## About
+This is a python library for spatial downscaling of CMIP6 climate data. It is an adaptation of 
+the GCMClimTool Library by Angarita H., Yates D., Depsky N. 2014-2021.  
+
+Downscaling methods are based on those described in:  
+* _A Technique for Generating Regional Climate Scenarios Using a Nearest-Neighbour Algorithm_ [http://dx.doi.org/10.1029/2002WR001769]
+* _Statistical downscaling using K-nearest neighbors_ [https://doi.org/10.1029/2004WR003444]
+
 ## Setup
 
 1. Request access to climate data
