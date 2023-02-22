@@ -73,10 +73,10 @@ GCM_PRECIP_VAR = 'pr'
 GCM_TEMPERATURE_VAR = 'tas'
 GCM_VAR_LIST = [GCM_PRECIP_VAR, GCM_TEMPERATURE_VAR]
 
-GCS_PROJECT = 'natcap-servers'
 GCS_PROTOCOL = 'gcs://'
-GCM_PREFIX = 'natcap-climate-data/cmip6'
-MSWEP_STORE_PATH = f'{GCS_PROTOCOL}natcap-climate-data/mswep_1980_2020.zarr'
+BUCKET = 'natcap-climate-data'
+GCM_PREFIX = 'cmip6'
+MSWEP_STORE_PATH = f'{GCS_PROTOCOL}{BUCKET}/mswep_1980_2020.zarr'
 MSWEP_DATE_RANGE = ('1980-01-01', '2020-12-31')
 MSWEP_VAR = 'precipitation'
 
@@ -96,7 +96,7 @@ CMIP_ZARR_CHUNKS = {
 
 def access_gcsfs():
     credentials, _ = google.auth.default()
-    return gcsfs.GCSFileSystem(project=GCS_PROJECT, token=credentials)
+    return gcsfs.GCSFileSystem(f'{GCS_PROTOCOL}/{BUCKET}', token=credentials)
 
 
 def shift_longitude_from_360(dataset):
