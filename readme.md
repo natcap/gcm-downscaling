@@ -16,7 +16,6 @@ Downscaling methods are based on those described in:
 2. Authenticate with Google Cloud
     * install `gcloud` if needed (https://cloud.google.com/sdk/docs/install)
 ```
-gcloud config set project natcap-server
 gcloud auth application-default login
 ```
 
