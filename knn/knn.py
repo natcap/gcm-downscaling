@@ -688,6 +688,22 @@ def execute(args):
             stored in ``GCM_EXPERIMENT_LIST``. If a CMIP model does not include
             a given experiment, that experiment will be skipped for that model.
             Required if `hindcast=False`.
+        args['observed_dataset_path'] (string, optional): if provided, this
+            dataset will be used instead of MSWEP as the source of observed,
+            historical preciptation. The dataset should be a netCDF or other
+            ``xarray.open_dataset`` readable format. It should contain
+            coordinates and variables named & defined as,
+
+                Coordinates:
+                * ``lat``  - decimal degrees (-90 : 90)
+                * ``lon``  - decimal degrees (-180 : 180) or (0 : 360)
+                * ``time`` - daily timesteps in units that can be parsed to
+                             ``numpy.datetime64``
+
+                Variables:
+                * ``precipitation`` - dimensions: (time, lat, lon)
+                                      units: millimeter
+
         args['n_workers'] (int, optional): The number of worker processes to
             use. If omitted, computation will take place in the current process.
             If a positive number, tasks can be parallelized across this many
