@@ -85,6 +85,20 @@ Adjust in `Docker Desktop > Settings > Resources`. 6GB of RAM should do it.
     a given experiment, that experiment will be skipped for that model.
     Required if `hindcast=False`.
 
+**'observed_dataset_path'** (string, optional): if provided, this
+    dataset will be used instead of MSWEP as the source of observed,
+    historical preciptation. The dataset should be a netCDF or other
+    ``xarray.open_dataset`` readable format. It should contain
+    coordinates and variables named & defined as,
+
+`Coordinates:`
+* `lat`  - decimal degrees (-90 : 90)
+* `lon`  - decimal degrees (-180 : 180) or (0 : 360)
+* `time` - daily timesteps in units that can be parsed to `numpy.datetime64`
+
+`Variables:`
+* `precipitation` - dimensions: `(time, lat, lon)`; units: millimeter
+
 **'n_workers'** (int, optional): The number of worker processes to
     use. If omitted, computation will take place in the current process.
     If a positive number, tasks can be parallelized across this many
@@ -113,17 +127,7 @@ by following the examples in `scripts/preprocessing/` to create `zarr` stores
 and move them to the `natcap-climate-data` bucket. 
 
 ### local data:
-To use this workflow with local observational data instead of MSWEP data,
-the data should be formatted as a netCDF (or other `xarray.open_dataset` readable format).
-
-The netCDF should contain coordinates and variables named & defined as,
-
-`Coordinates:`
-* `lat`  - decimal degrees (-90 : 90)
-* `lon`  - decimal degrees (-180 : 180) or (0 : 360)
-* `time` - daily timesteps in units that can be parsed to `numpy.datetime64`
-
-`Variables:`
-* `precipitation` - dimensions: `(time, lat, lon)`; units: millimeter
+To use this workflow with local observational data instead of MSWEP data
+use the optional argument: `args[observed_dataset_path]` (see above for details).
 
 The downscaled product will have the same spatial resolution as the observation data.
