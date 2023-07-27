@@ -96,7 +96,7 @@ CMIP_ZARR_CHUNKS = {
 
 def access_gcsfs():
     credentials, _ = google.auth.default()
-    return gcsfs.GCSFileSystem(f'{GCS_PROTOCOL}/{BUCKET}', token=credentials)
+    return gcsfs.GCSFileSystem(token=credentials)
 
 
 def shift_longitude_from_360(dataset):
@@ -831,7 +831,7 @@ def execute(args):
     gcs_filesystem = access_gcsfs()
     for gcm_model in gcm_model_list:
         historical_gcm_files = gcs_filesystem.glob(
-            f"{GCM_PREFIX}/{gcm_model}/{GCM_PRECIP_VAR}_day_{gcm_model}_historical_*.zarr/")
+            f"{BUCKET}/{GCM_PREFIX}/{gcm_model}/{GCM_PRECIP_VAR}_day_{gcm_model}_historical_*.zarr/")
         if len(historical_gcm_files) == 0:
             LOGGER.warning(
                 f'No files found for model: {gcm_model}, experiment: historical'
@@ -874,7 +874,7 @@ def execute(args):
         )
         for gcm_experiment in args['gcm_experiment_list']:
             future_gcm_files = gcs_filesystem.glob(
-                f"{GCM_PREFIX}/{gcm_model}/{GCM_PRECIP_VAR}_day_{gcm_model}_{gcm_experiment}_*.zarr/")
+                f"{BUCKET}/{GCM_PREFIX}/{gcm_model}/{GCM_PRECIP_VAR}_day_{gcm_model}_{gcm_experiment}_*.zarr/")
 
             if len(future_gcm_files) == 0:
                 LOGGER.warning(
