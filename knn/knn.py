@@ -50,7 +50,6 @@ MODEL_LIST = [
     'CanESM5',
     'CESM2',
     'CESM2-WACCM',
-    'CESM-FV2',
     'CMCC-CM2-HR4',
     'CMCC-CM2-SR5',
     'CMCC-ESM2',
@@ -58,6 +57,7 @@ MODEL_LIST = [
     'GFDL-EMS4',
     'MIROC6',
     'MPI-ESM1-2-LR',
+    # 'CESM-FV2',  # never created zarrs; https://github.com/natcap/gcm-downscaling/issues/19
     # 'IPSL-CM6A-LR', # unreadable by xarray; https://github.com/h5netcdf/h5netcdf/issues/94
     # 'MPI-ESM1-2-HR'  # has a bad file with 0 bytes
 ]
@@ -472,18 +472,24 @@ def synthesize_extreme_values(
         historical_gcm_path, reference_period_dates,
         forecast_gcm_path, prediction_period_dates, target_csv_path):
     LOGGER.info(f'extreme values analysis for {forecast_gcm_path}')
-    with xarray.open_dataset(historical_gcm_path) as dataset:
-        dataset['time'] = dataset.indexes['time'].to_datetimeindex()
-        dataset = dataset.sortby('time')
-        historical_data = dataset.sel(time=slice(*reference_period_dates))
-        historical_data = historical_data.max(['lon', 'lat'])
-    historical_series = historical_data[GCM_PRECIP_VAR].to_series() * KG_M2S_TO_MM
-    with xarray.open_dataset(forecast_gcm_path) as dataset:
-        dataset['time'] = dataset.indexes['time'].to_datetimeindex()
-        dataset = dataset.sortby('time')
-        forecast_data = dataset.sel(time=slice(*prediction_period_dates))
-        forecast_data = forecast_data.max(['lon', 'lat'])
-    forecast_series = forecast_data[GCM_PRECIP_VAR].to_series() * KG_M2S_TO_MM
+
+    def extract_extreme_series(dataset_path, period_dates):
+        with xarray.open_dataset(dataset_path) as dataset:
+            # pyextremes expects to operate on a pandas series with a
+            # DatetimeIndex some GCM have this type already while others
+            # have CFTimeIndex
+            if not isinstance(dataset.indexes['time'], pandas.DatetimeIndex):
+                dataset['time'] = dataset.indexes['time'].to_datetimeindex()
+            series = (dataset.sortby('time')
+                             .sel(time=slice(*period_dates))
+                             .max(['lon', 'lat'])[GCM_PRECIP_VAR]
+                             .to_series() * KG_M2S_TO_MM)
+        return series
+
+    historical_series = extract_extreme_series(
+        historical_gcm_path, reference_period_dates)
+    forecast_series = extract_extreme_series(
+        forecast_gcm_path, prediction_period_dates)
 
     threshold = numpy.quantile(historical_series, q=[EXTREME_PRECIP_QUANTILE])[0]
     LOGGER.info(
@@ -495,7 +501,6 @@ def synthesize_extreme_values(
         'historic_sample': numpy.sort(historical_sample),
         'forecast_sample': numpy.sort(forecast_sample),
     })
-    # df.plot()
     df.to_csv(target_csv_path, index=False)
     return threshold
 
