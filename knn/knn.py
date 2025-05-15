@@ -836,7 +836,7 @@ def execute(args):
     gcs_filesystem = access_gcsfs()
     for gcm_model in gcm_model_list:
         historical_gcm_files = gcs_filesystem.glob(
-            f"{BUCKET}/{GCM_PREFIX}/{gcm_model}/{GCM_PRECIP_VAR}_day_{gcm_model}_historical_*.zarr/")
+            f"{BUCKET}/{GCM_PREFIX}/{gcm_model}/{GCM_PRECIP_VAR}_day_{gcm_model}_historical_*.zarr")
         if len(historical_gcm_files) == 0:
             LOGGER.warning(
                 f'No files found for model: {gcm_model}, experiment: historical'
@@ -879,7 +879,7 @@ def execute(args):
         )
         for gcm_experiment in args['gcm_experiment_list']:
             future_gcm_files = gcs_filesystem.glob(
-                f"{BUCKET}/{GCM_PREFIX}/{gcm_model}/{GCM_PRECIP_VAR}_day_{gcm_model}_{gcm_experiment}_*.zarr/")
+                f"{BUCKET}/{GCM_PREFIX}/{gcm_model}/{GCM_PRECIP_VAR}_day_{gcm_model}_{gcm_experiment}_*.zarr")
 
             if len(future_gcm_files) == 0:
                 LOGGER.warning(
