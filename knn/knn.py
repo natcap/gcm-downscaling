@@ -644,7 +644,14 @@ def extract_from_zarr(zarr_path, aoi_path, target_path, open_chunks=-1):
             & (dataset.lon <= maxx + width)
             & (dataset.lat >= miny - height)
             & (dataset.lat <= maxy + height), drop=True)
-        dataset.to_netcdf(target_path)
+
+        try:
+            dataset.to_netcdf(target_path)
+        except ValueError:
+            LOGGER.warning("Caught ValueError when writing NetCDF, "
+                           "now setting time dtype explicitly.")
+            dataset['time'] = dataset.time.astype('datetime64[ns]')
+            dataset.to_netcdf(target_path)
 
 
 def validate(dataset, prediction_start_date, prediction_end_date):
