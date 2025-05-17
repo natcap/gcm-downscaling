@@ -645,8 +645,9 @@ def extract_from_zarr(zarr_path, aoi_path, target_path, open_chunks=-1):
             & (dataset.lat >= miny - height)
             & (dataset.lat <= maxy + height), drop=True)
 
-        if dataset.time.dtype == 'object' and not dataset.time_bnds:
-            # set time_bnds encoding to match time's
+        # if the time datatype is not set as datetime64,
+        # the time_bnds encoding may need to be set to match that of time
+        if dataset.time.dtype == 'object' and not dataset["time_bnds"].encoding:
             dataset['time_bnds'].encoding.update(dataset.time.encoding)
 
         dataset.to_netcdf(target_path)
