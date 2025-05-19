@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import patch, MagicMock
 
+import gcsfs
 from osgeo import osr
 import numpy
 import pandas
@@ -153,12 +154,11 @@ class TestKNN(unittest.TestCase):
             dataset.time, transitions, month, day, near_window)
         numpy.testing.assert_array_almost_equal(jp_matrix, expected_matrix)
 
-    @patch('knn.knn.GCS_PROTOCOL', 'file:///')
     def test_execute(self):
         """Test the whole execute method."""
 
         from knn import knn
-        thing = knn.GCSFS
+        thing = gcsfs.GCSFileSystem(project='natcap-servers')
 
         observed_dataset_path = os.path.join(self.workspace_dir, 'obs.nc')
         historical_gcm_path = os.path.join(
@@ -211,8 +211,8 @@ class TestKNN(unittest.TestCase):
         historic_gcm_dataset = xarray.Dataset({knn.GCM_PRECIP_VAR: historic_da})
         historic_gcm_dataset.to_zarr(historical_gcm_path)
 
-        forecast_start = '2000-01-01'
-        forecast_end = '2001-12-31'
+        forecast_start = '2010-01-01'
+        forecast_end = '2018-12-31'
         forecast_dates = pandas.date_range(
             forecast_start, forecast_end, freq='D')
         precip_array = numpy.random.negative_binomial(
