@@ -2,9 +2,7 @@ import os
 import shutil
 import tempfile
 import unittest
-from unittest.mock import patch, MagicMock
 
-import gcsfs
 from osgeo import osr
 import numpy
 import pandas
