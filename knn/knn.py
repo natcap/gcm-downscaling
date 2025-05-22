@@ -803,22 +803,6 @@ def execute(args):
                 min_date = str(dataset.time.min().values)[:10]
                 max_date = str(dataset.time.max().values)[:10]
             hindcast_date_range = (min_date, max_date)
-        else: # validate dates for MSWEP
-            with xarray.open_dataset(mswep_netcdf_path) as dataset:
-                min_date = str(dataset.time.min().values)[:10]
-                max_date = str(dataset.time.max().values)[:10]
-                print(datetime.strptime(args['reference_period_dates'][0], '%Y-%m-%d'),
-                    datetime.strptime(max_date, '%Y-%m-%d'),
-                        datetime.strptime(args['reference_period_dates'][1], '%Y-%m-%d'),
-                        datetime.strptime(min_date, '%Y-%m-%d'))
-                if (datetime.strptime(args['reference_period_dates'][0], '%Y-%m-%d') >
-                    datetime.strptime(max_date, '%Y-%m-%d') or
-                        datetime.strptime(args['reference_period_dates'][1], '%Y-%m-%d') <
-                        datetime.strptime(min_date, '%Y-%m-%d')):
-                    raise ValueError(
-                        f'the requested reference time period is outside the '
-                        f'time-range of MSWEP ({min_date} : {max_date})'
-                    )
         hind_bootstrap_dates_task = graph.add_task(
             func=bootstrap_dates_precip,
             kwargs={
