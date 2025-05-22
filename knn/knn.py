@@ -735,15 +735,14 @@ def execute(args):
     # Validate reference dates if using MSWEP data
     if 'observed_dataset_path' not in args or \
             args['observed_dataset_path'] is None:
-        min_date = "1980-01-01"  # hard-coding these for MSWEP
-        max_date = "2020-12-30"
-        if (datetime.strptime(args['reference_period_dates'][0], '%Y-%m-%d') >
-            datetime.strptime(max_date, '%Y-%m-%d') or
-                datetime.strptime(args['reference_period_dates'][1], '%Y-%m-%d') <
-                datetime.strptime(min_date, '%Y-%m-%d')):
+        min_mswep_date = datetime.strptime(MSWEP_DATE_RANGE[0], '%Y-%m-%d')
+        max_mswep_date = datetime.strptime(MSWEP_DATE_RANGE[1], '%Y-%m-%d')
+        ref_start = datetime.strptime(args['reference_period_dates'][0], '%Y-%m-%d')
+        ref_end = datetime.strptime(args['reference_period_dates'][1], '%Y-%m-%d')
+        if (ref_start > max_mswep_date or ref_end < min_mswep_date):
             raise ValueError(
                 f'the requested reference time period is outside the '
-                f'time-range of MSWEP ({min_date} : {max_date})'
+                f'time-range of MSWEP ({min_mswep_date} : {max_mswep_date})'
             )
 
     mswep_extract_path = os.path.join(intermediate_dir, 'extracted_mswep.nc')
