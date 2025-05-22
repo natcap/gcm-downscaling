@@ -325,7 +325,9 @@ def bootstrap_dates_precip(
         historic_gcm_jp_matrix_lookup = historic_obs_jp_matrix_lookup
         gcm_var = MSWEP_VAR
     else:
-        with xarray.open_dataset(gcm_netcdf_path, use_cftime=True) as gcm_dataset:
+        with xarray.open_dataset(
+            gcm_netcdf_path, decode_times=xarray.coders.CFDatetimeCoder(
+                use_cftime=True)) as gcm_dataset:
             gcm_dataset = gcm_dataset.sortby('time')
             validate(gcm_dataset, *prediction_dates)
             LOGGER.info(
@@ -526,7 +528,8 @@ def downscale_precip(
             Not used for hindcasts.
     """
     LOGGER.info('Downscaling...')
-    dates = pandas.read_csv(bootstrapped_dates_path, parse_dates={'date': [0]})
+    dates = pandas.read_csv(bootstrapped_dates_path)
+    dates['date'] = pandas.to_datetime(dates.iloc[:, 0])
     if extreme_value_samples_path:
         extremes = pandas.read_csv(extreme_value_samples_path)
     with xarray.open_dataset(gridded_observed_precip) as dataset:
@@ -642,23 +645,28 @@ def extract_from_zarr(zarr_path, aoi_path, target_path, open_chunks=-1):
 
         # if the time datatype is not set as datetime64,
         # the time_bnds encoding may need to be set to match that of time
-        if dataset.time.dtype == 'object' and not dataset["time_bnds"].encoding:
+        if dataset.time.dtype == 'object' and ("time_bnds" in dataset and
+                                               not dataset["time_bnds"].encoding):
             dataset['time_bnds'].encoding.update(dataset.time.encoding)
 
         dataset.to_netcdf(target_path)
 
 
-def validate(dataset, prediction_start_date, prediction_end_date):
+def validate(dataset, start_date, end_date):
+    """Validate that reference or prediction dates are in dataset's range
+
+    Check that start date occurs before dataset's end date and end date
+    occurs after dataset's start date (with offset)"""
     # TODO: Also validate for hindcasts,
     # that the prediction dates are within bounds of observed data.
     gcm_start_date = datetime.fromisoformat(dataset.time.min().item().isoformat())
     gcm_end_date = datetime.fromisoformat(dataset.time.max().item().isoformat())
     date_offset = timedelta(days=NEAR_WINDOW)
-    if ((datetime.strptime(prediction_start_date, '%Y-%m-%d') + date_offset) > gcm_end_date or
-            (datetime.strptime(prediction_end_date, '%Y-%m-%d') - date_offset) < gcm_start_date):
+    if ((datetime.strptime(start_date, '%Y-%m-%d') + date_offset) > gcm_end_date or
+            (datetime.strptime(end_date, '%Y-%m-%d') - date_offset) < gcm_start_date):
         raise ValueError(
-            f'the requested prediction period {prediction_start_date} : '
-            f'{prediction_end_date} is outside the time-range of the gcm'
+            f'the requested time period {start_date} : '
+            f'{end_date} is outside the time-range of the gcm'
             f'({gcm_start_date} : {gcm_end_date})')
 
 
@@ -724,6 +732,20 @@ def execute(args):
     if not os.path.exists(intermediate_dir):
         os.mkdir(intermediate_dir)
 
+    # Validate reference dates if using MSWEP data
+    if 'observed_dataset_path' not in args or \
+            args['observed_dataset_path'] is None:
+        min_date = "1980-01-01"  # hard-coding these for MSWEP
+        max_date = "2020-12-30"
+        if (datetime.strptime(args['reference_period_dates'][0], '%Y-%m-%d') >
+            datetime.strptime(max_date, '%Y-%m-%d') or
+                datetime.strptime(args['reference_period_dates'][1], '%Y-%m-%d') <
+                datetime.strptime(min_date, '%Y-%m-%d')):
+            raise ValueError(
+                f'the requested reference time period is outside the '
+                f'time-range of MSWEP ({min_date} : {max_date})'
+            )
+
     mswep_extract_path = os.path.join(intermediate_dir, 'extracted_mswep.nc')
     aoi_mask_mswep_path = os.path.join(intermediate_dir, 'aoi_mask_mswep.nc')
     mswep_netcdf_path = os.path.join(intermediate_dir, 'mswep_mean.nc')
@@ -782,6 +804,22 @@ def execute(args):
                 min_date = str(dataset.time.min().values)[:10]
                 max_date = str(dataset.time.max().values)[:10]
             hindcast_date_range = (min_date, max_date)
+        else: # validate dates for MSWEP
+            with xarray.open_dataset(mswep_netcdf_path) as dataset:
+                min_date = str(dataset.time.min().values)[:10]
+                max_date = str(dataset.time.max().values)[:10]
+                print(datetime.strptime(args['reference_period_dates'][0], '%Y-%m-%d'),
+                    datetime.strptime(max_date, '%Y-%m-%d'),
+                        datetime.strptime(args['reference_period_dates'][1], '%Y-%m-%d'),
+                        datetime.strptime(min_date, '%Y-%m-%d'))
+                if (datetime.strptime(args['reference_period_dates'][0], '%Y-%m-%d') >
+                    datetime.strptime(max_date, '%Y-%m-%d') or
+                        datetime.strptime(args['reference_period_dates'][1], '%Y-%m-%d') <
+                        datetime.strptime(min_date, '%Y-%m-%d')):
+                    raise ValueError(
+                        f'the requested reference time period is outside the '
+                        f'time-range of MSWEP ({min_date} : {max_date})'
+                    )
         hind_bootstrap_dates_task = graph.add_task(
             func=bootstrap_dates_precip,
             kwargs={
@@ -849,6 +887,21 @@ def execute(args):
                 f'Found: {historical_gcm_files}'
                 f'skipping model {gcm_model}.')
             continue
+
+        # validate that reference dates fall within range of historical data
+        with xarray.open_dataset(f'{GCS_PROTOCOL}{historical_gcm_files[0]}',
+                                 decode_times=xarray.coders.CFDatetimeCoder(
+                                     use_cftime=True),
+                                 engine='zarr') as gcm_hist_dataset:
+            validate(gcm_hist_dataset, *args['reference_period_dates'])
+        # validate forecast dates fall within range of future data
+        future_gcm_files = gcs_filesystem.glob(
+                f"{BUCKET}/{GCM_PREFIX}/{gcm_model}/{GCM_PRECIP_VAR}_day_{gcm_model}_ssp*.zarr")
+        with xarray.open_dataset(f'{GCS_PROTOCOL}{future_gcm_files[0]}',
+                                 decode_times=xarray.coders.CFDatetimeCoder(
+                                     use_cftime=True),
+                                 engine='zarr') as future_gcm_dataset:
+            validate(future_gcm_dataset, *args['prediction_dates'])
 
         gcm_historical_extract_path = os.path.join(
             intermediate_dir, f'extracted_{gcm_model}_historical.nc')
