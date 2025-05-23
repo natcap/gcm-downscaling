@@ -855,7 +855,7 @@ def execute(args):
         gcm_model_list = args['gcm_model_list']
     except KeyError:
         gcm_model_list = []
-    gcs_filesystem = gcsfs.GCSFileSystem()
+    gcs_filesystem = gcsfs.GCSFileSystem(token='anon')
     for gcm_model in gcm_model_list:
         historical_gcm_files = gcs_filesystem.glob(
             f"{BUCKET}/{GCM_PREFIX}/{gcm_model}/{GCM_PRECIP_VAR}_day_{gcm_model}_historical_*.zarr")
