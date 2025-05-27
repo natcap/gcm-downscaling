@@ -169,7 +169,7 @@ class TestKNN(unittest.TestCase):
 
         # reference range can be pre-1980 bc using own observed data (not MSWEP)
         start = '1910-01-01'
-        end = '1979-12-31'  
+        end = '1979-12-31'
         dates = pandas.date_range(start, end, freq='D')
         lons = [0.0, 2.0, 4.0, 6.0]
         lats = [0.0, 2.0, 4.0, 6.0]
@@ -188,6 +188,7 @@ class TestKNN(unittest.TestCase):
         precip_dataset = xarray.Dataset({knn.MSWEP_VAR: da})
         precip_dataset.to_netcdf(observed_dataset_path)
 
+        # Does not raise error as forecast period overlaps dataset period
         forecast_start = '2010-01-01'
         forecast_end = '2018-12-31'
 

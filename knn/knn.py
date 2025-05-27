@@ -329,7 +329,6 @@ def bootstrap_dates_precip(
             gcm_netcdf_path, decode_times=xarray.coders.CFDatetimeCoder(
                 use_cftime=True)) as gcm_dataset:
             gcm_dataset = gcm_dataset.sortby('time')
-            validate(gcm_dataset, *prediction_dates)
             LOGGER.info(
                 f'computing GCM JP matrices for reference period '
                 f'{reference_period_dates[0]} : {reference_period_dates[1]}')
