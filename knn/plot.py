@@ -17,8 +17,8 @@ def plot(dates_filepath, precip_filepath, observed_mean_precip_filepath,
          hindcast, target_filename):
     LOGGER.info(f'creating report for {precip_filepath}')
 
-    bootstrapped_data = pandas.read_csv(
-        dates_filepath, parse_dates={'date': [0]})
+    bootstrapped_data = pandas.read_csv(dates_filepath)
+    bootstrapped_data['date'] = pandas.to_datetime(bootstrapped_data.iloc[:, 0])
     bootstrapped_data.set_index('date', inplace=True)
     bootstrapped_data.drop(columns=[
         'historic_date',
@@ -44,7 +44,14 @@ def plot(dates_filepath, precip_filepath, observed_mean_precip_filepath,
         data_series_list = ['python_prediction']
         # For forecasts, only the reference period of the observed data
         # is relevant
-        mswep_df = mswep_df[reference_period_dates[0]: reference_period_dates[1]]
+        ref_start_date = pandas.to_datetime(reference_period_dates[0])
+        ref_end_date = pandas.to_datetime(reference_period_dates[1])
+        # mswep_df = mswep_df[ref_start_date:ref_end_date]
+        mswep_df = mswep_df.loc[
+            (mswep_df.index >= ref_start_date) &
+            (mswep_df.index <= ref_end_date)
+        ]
+
 
     data['month'] = data.index.month
     data_long = pandas.melt(
