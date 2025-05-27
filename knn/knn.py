@@ -306,7 +306,8 @@ def bootstrap_dates_precip(
                 time=slice(*reference_period_dates))
         lower_bound_obs = lower_precip_threshold
         upper_bound_obs = numpy.percentile(
-            obs_reference_period_ds[MSWEP_VAR].values, q=[upper_precip_percentile])
+            obs_reference_period_ds[MSWEP_VAR].values,
+            q=[upper_precip_percentile])
         LOGGER.info(
             f'Threshold precip values used for observational record: '
             f'Lower bound: {lower_bound_obs}, '
@@ -625,9 +626,12 @@ def extract_from_zarr(zarr_path, aoi_path, target_path, open_chunks=-1):
     # TODO: validate aoi has geographic coords
     minx, miny, maxx, maxy = pygeoprocessing.get_vector_info(
         aoi_path)['bounding_box']
-    with xarray.open_dataset(zarr_path,
-                             engine='zarr',
-                             chunks=open_chunks) as dataset:
+    with xarray.open_dataset(
+            zarr_path,
+            engine='zarr',
+            chunks=open_chunks,
+            backend_kwargs={"storage_options": {"token": 'anon'}}
+            ) as dataset:
         # TODO: in order to accomodate an AOI that crosses 180 deg longitude,
         # it might be best to shift the AOI coordinates to 0:360, rather than
         # shifting the GCM to -180:180.
@@ -871,18 +875,22 @@ def execute(args):
             continue
 
         # validate that reference dates fall within range of historical data
-        with xarray.open_dataset(f'{GCS_PROTOCOL}{historical_gcm_files[0]}',
-                                 decode_times=xarray.coders.CFDatetimeCoder(
-                                     use_cftime=True),
-                                 engine='zarr') as gcm_hist_dataset:
+        with xarray.open_dataset(
+                f'{GCS_PROTOCOL}{historical_gcm_files[0]}',
+                decode_times=xarray.coders.CFDatetimeCoder(use_cftime=True),
+                engine='zarr',
+                backend_kwargs={"storage_options": {"token": 'anon'}}
+                    ) as gcm_hist_dataset:
             validate(gcm_hist_dataset, *args['reference_period_dates'])
         # validate forecast dates fall within range of future data
         future_gcm_files = gcs_filesystem.glob(
                 f"{BUCKET}/{GCM_PREFIX}/{gcm_model}/{GCM_PRECIP_VAR}_day_{gcm_model}_ssp*.zarr")
-        with xarray.open_dataset(f'{GCS_PROTOCOL}{future_gcm_files[0]}',
-                                 decode_times=xarray.coders.CFDatetimeCoder(
-                                     use_cftime=True),
-                                 engine='zarr') as future_gcm_dataset:
+        with xarray.open_dataset(
+                f'{GCS_PROTOCOL}{future_gcm_files[0]}',
+                decode_times=xarray.coders.CFDatetimeCoder(use_cftime=True),
+                engine='zarr',
+                backend_kwargs={"storage_options": {"token": 'anon'}}
+                ) as future_gcm_dataset:
             validate(future_gcm_dataset, *args['prediction_dates'])
 
         gcm_historical_extract_path = os.path.join(
