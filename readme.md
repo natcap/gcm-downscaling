@@ -6,18 +6,6 @@ Downscaling methods are based on those described in:
 * _A Technique for Generating Regional Climate Scenarios Using a Nearest-Neighbour Algorithm_ [http://dx.doi.org/10.1029/2002WR001769]
 * _Statistical downscaling using K-nearest neighbors_ [https://doi.org/10.1029/2004WR003444]
 
-## Setup
-
-1. Request access to climate data
-    * Send Dave a google account email address you wish to use for Google Cloud.  
-    (gmail or @stanford.edu addresses should work)
-    * _(Users will be granted Role `Storage Object Viewer` for bucket `natcap-climate-data`)_
-
-2. Authenticate with Google Cloud
-    * install `gcloud` if needed (https://cloud.google.com/sdk/docs/install)
-```
-gcloud auth application-default login
-```
 
 ## Usage option 1: with a conda environment
 
@@ -113,7 +101,7 @@ This workflow derives downscaled climate data from,
 * MSWEP historical precipitation data.
 
 ## Data Storage
-Analysis-ready data are stored in `zarr` format in a private google cloud bucket
+Analysis-ready data are stored in `zarr` format in a public google cloud bucket
 (`natcap-climate-data`) in the `NatCap Servers` cloud project.  
 
 Raw netCDF data are stored on Stanford's Oak Storage Service at

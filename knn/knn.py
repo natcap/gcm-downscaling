@@ -885,6 +885,10 @@ def execute(args):
         # validate forecast dates fall within range of future data
         future_gcm_files = gcs_filesystem.glob(
                 f"{BUCKET}/{GCM_PREFIX}/{gcm_model}/{GCM_PRECIP_VAR}_day_{gcm_model}_ssp*.zarr")
+        if len(future_gcm_files) == 0:
+            LOGGER.warning(
+                f'No files found for model: {gcm_model}. Skipping.')
+            continue
         with xarray.open_dataset(
                 f'{GCS_PROTOCOL}{future_gcm_files[0]}',
                 decode_times=xarray.coders.CFDatetimeCoder(use_cftime=True),
