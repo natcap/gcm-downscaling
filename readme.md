@@ -100,14 +100,15 @@ This workflow derives downscaled climate data from,
 * CMIP6 General Circulation Models (ee `knn.MODEL_LIST` for list of available models)
 * MSWEP historical precipitation data.
 
-## Data License and Attribution
+## Data License
 
-MSWEP data are distributed under the
+MSWEP is released under the
 [Creative Commons Attribution-NonCommerical (CC By-NC) 4.0 license](https://creativecommons.org/licenses/by-nc/4.0/deed.en)
 and can be used for academic research, nonprofit scientific studies,
-personal projects, and certain government or NGO applications.
+personal projects, and certain government or NGO applications. For more
+information, please visit https://www.gloh2o.org/.
 
-CMIP6 data are distributed under the
+CMIP6 multi-model data are licensed under a
 [Creative Commons Attribution 4.0 International (CC BY 4.0) license](https://creativecommons.org/licenses/by/4.0/).
 For more information, please see the
 [CMIP6: Terms of Use](https://pcmdi.llnl.gov/CMIP6/TermsOfUse/TermsOfUse6-2.html)
